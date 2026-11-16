@@ -90,7 +90,7 @@ pub enum LayoutError {
 /// LED counts per edge plus the strip's physical orientation. A Layout
 /// only exists if its packet (chain plus a positive offset's leading
 /// black LEDs) fits one DRGB packet (490 LEDs).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     top: usize,
     right: usize,
@@ -185,6 +185,22 @@ impl Layout {
     /// leading black LEDs.
     pub fn packet_len(&self) -> usize {
         self.count() + self.offset.max(0) as usize
+    }
+
+    /// The one-line layout summary, logged at startup and again on a
+    /// reload that changed the layout (§7).
+    pub fn summary(&self) -> String {
+        format!(
+            "top {}, right {}, bottom {}, left {} = {} LEDs, start {}, {}, offset {}",
+            self.top,
+            self.right,
+            self.bottom,
+            self.left,
+            self.count(),
+            self.start.name(),
+            self.direction.name(),
+            self.offset,
+        )
     }
 }
 

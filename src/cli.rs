@@ -115,7 +115,15 @@ fn bail(message: impl std::fmt::Display) -> ! {
         .exit()
 }
 
-pub fn parse() -> Config {
+/// The result of parsing: the merged, validated config, plus the config
+/// file path (None when the built-in defaults are used) so the daemon
+/// can reload it live (§7).
+pub struct Parsed {
+    pub config: Config,
+    pub path: Option<PathBuf>,
+}
+
+pub fn parse() -> Parsed {
     let matches = Cli::command().get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
@@ -129,7 +137,11 @@ pub fn parse() -> Config {
     let cfg = discovered.config;
     tracing::info!("on_no_session: {}", cfg.on_no_session.name());
 
-    merge(&cli, &matches, cfg).unwrap_or_else(|e| bail(e))
+    let config = merge(&cli, &matches, cfg).unwrap_or_else(|e| bail(e));
+    Parsed {
+        config,
+        path: discovered.path,
+    }
 }
 
 /// Overlay the CLI flags on the discovered config. Precedence: CLI

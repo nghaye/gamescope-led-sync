@@ -85,6 +85,12 @@ impl WledSender {
         let _ = self.sock.send_to(&packet, self.addr);
         self.sent += 1;
     }
+
+    /// timeout_s is carried in every packet header, so a reload can
+    /// update it in place without recreating the sender (§7).
+    pub fn set_timeout(&mut self, timeout_s: u8) {
+        self.timeout_s = timeout_s;
+    }
 }
 
 fn crc32(seed: u32, data: &[u8]) -> u32 {

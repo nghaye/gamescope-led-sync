@@ -15,8 +15,18 @@ mod cli;
 mod config;
 mod geometry;
 mod output;
+mod reload;
 
-use std::{cell::RefCell, process::ExitCode, rc::Rc, thread::sleep, time::Duration};
+use {
+    crate::config::{Config, OnNoSession},
+    std::{
+        cell::{Cell, RefCell},
+        process::ExitCode,
+        rc::Rc,
+        thread::sleep,
+        time::{Duration, Instant},
+    },
+};
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
@@ -25,44 +35,37 @@ fn main() -> ExitCode {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let cfg = cli::parse();
+    let parsed = cli::parse();
     pipewire::init();
     capture::install_signal_handler();
 
-    let l = &cfg.layout;
-    tracing::info!(
-        "layout: top {}, right {}, bottom {}, left {} = {} LEDs, start {}, {}",
-        l.top(),
-        l.right(),
-        l.bottom(),
-        l.left(),
-        l.count(),
-        l.start().name(),
-        l.direction().name(),
-    );
-    // The WLED sender and the last colors sent live here, across
-    // sessions, so a reconnect keeps the LEDs lit instead of dropping
-    // them for the reconnect gap (see wait_and_keepalive).
-    let sender = if cfg.sends() {
-        let host = cfg.wled.as_deref().expect("sends() implies a host");
-        match output::WledSender::new(host, cfg.port, cfg.timeout_s) {
-            Ok(s) => Some(Rc::new(RefCell::new(s))),
-            Err(e) => {
-                tracing::error!("{e}");
-                return ExitCode::FAILURE;
-            },
-        }
-    } else if cfg.dry_run {
-        tracing::info!("--dry-run: packets are computed and logged, never sent");
-        None
-    } else {
-        tracing::info!("no --wled given: dry run, nothing is sent");
-        None
-    };
+    // The config, the WLED sender, and the last colors sent are shared
+    // across sessions and mutated by the reload path, so a reconnect
+    // and a live reload both act on the current values (§7).
+    let cfg = Rc::new(RefCell::new(parsed.config));
+    let reloader = Rc::new(RefCell::new(reload::Reloader::new(parsed.path)));
+    let layout_line = cfg.borrow().layout.summary();
+    tracing::info!("layout: {layout_line}");
+    let sender: Rc<RefCell<Option<output::WledSender>>> = Rc::new(RefCell::new(None));
+    let last_sender_try = Rc::new(Cell::new(Instant::now() - reload::SENDER_RETRY));
     let last_colors: Rc<RefCell<Option<Vec<[u8; 3]>>>> = Rc::new(RefCell::new(None));
 
+    // A sender that cannot be created (unresolvable host, bind error)
+    // never exits the daemon: it is retried every 5 s (§6.0).
+    reload::ensure_sender(&cfg.borrow(), &sender, &last_sender_try);
+    {
+        let c = cfg.borrow();
+        if sender.borrow().is_none() {
+            if c.dry_run {
+                tracing::info!("--dry-run: packets are computed and logged, never sent");
+            } else if c.wled.is_none() {
+                tracing::info!("no --wled given: dry run, nothing is sent");
+            }
+        }
+    }
+
     loop {
-        match capture::run(&cfg, sender.as_ref(), &last_colors) {
+        match capture::run(&cfg, &sender, &last_colors, &reloader, &last_sender_try) {
             Ok(capture::Reason::OnceDone) => return ExitCode::SUCCESS,
             Ok(capture::Reason::Interrupted) => {
                 tracing::info!("interrupted; disconnected cleanly");
@@ -73,14 +76,14 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             },
             Ok(capture::Reason::Stopped(msg)) => {
-                if cfg.once {
+                if cfg.borrow().once {
                     tracing::warn!("{msg}");
                     return ExitCode::FAILURE;
                 }
                 tracing::warn!("session ended ({msg}); reconnecting in 2 s");
             },
             Err(msg) => {
-                if cfg.once {
+                if cfg.borrow().once {
                     tracing::warn!("{msg}");
                     return ExitCode::FAILURE;
                 }
@@ -92,19 +95,27 @@ fn main() -> ExitCode {
         if capture::interrupted() {
             return ExitCode::SUCCESS;
         }
-        wait_and_keepalive(sender.as_ref(), &last_colors);
+        wait_and_keepalive(&cfg, &sender, &last_colors, &reloader, &last_sender_try);
         if capture::interrupted() {
             return ExitCode::SUCCESS;
         }
     }
 }
 
-/// Wait before reconnecting, resending the last colors about once a
-/// second so WLED stays in realtime mode and does not fall back to its
-/// preset during the gap.
+/// Wait before reconnecting. While no session is connected, apply the
+/// configured no-session behavior (§6.1/D5): "preset" sends nothing and
+/// lets WLED fall back to its own preset after timeout_s, "keep-last"
+/// resends the last colors every second, "black" sends a black packet
+/// every second; the latter two send nothing until a frame was ever
+/// captured. Reload and sender retry run every second here too. On a
+/// signal the loop returns without sending anything (§6.1: clean
+/// shutdown sends nothing).
 fn wait_and_keepalive(
-    sender: Option<&Rc<RefCell<output::WledSender>>>,
+    cfg: &Rc<RefCell<Config>>,
+    sender: &Rc<RefCell<Option<output::WledSender>>>,
     last_colors: &Rc<RefCell<Option<Vec<[u8; 3]>>>>,
+    reloader: &Rc<RefCell<reload::Reloader>>,
+    last_sender_try: &Rc<Cell<Instant>>,
 ) {
     let step = Duration::from_secs(1);
     let mut waited = Duration::ZERO;
@@ -112,10 +123,23 @@ fn wait_and_keepalive(
         if capture::interrupted() {
             return;
         }
-        if let Some(sender) = sender
-            && let Some(colors) = last_colors.borrow().as_ref()
-        {
-            sender.borrow_mut().send(colors);
+        reload::reload_if_changed(cfg, sender, reloader);
+        let c = cfg.borrow().clone();
+        reload::ensure_sender(&c, sender, last_sender_try);
+        if let Some(s) = sender.borrow_mut().as_mut() {
+            match c.on_no_session {
+                OnNoSession::Preset => {},
+                OnNoSession::KeepLast => {
+                    if let Some(colors) = last_colors.borrow().as_ref() {
+                        s.send(colors);
+                    }
+                },
+                OnNoSession::Black => {
+                    if last_colors.borrow().is_some() {
+                        s.send(&vec![[0u8; 3]; c.layout.packet_len()]);
+                    }
+                },
+            }
         }
         sleep(step);
         waited += step;
