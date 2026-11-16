@@ -517,7 +517,12 @@ pub fn run(
                         }
                     }
                 }
-                let graded = shape_colors(st.smoothed.as_ref().unwrap(), cfg.saturation, cfg.gamma);
+                let graded = shape_colors(
+                    st.smoothed.as_ref().unwrap(),
+                    cfg.saturation,
+                    cfg.gamma,
+                    cfg.brightness,
+                );
                 // The DRGB packet is the graded chain with the offset
                 // applied (black head or rotation), so WLED's segment
                 // sees packet_len LEDs starting at index 0.
@@ -532,17 +537,19 @@ pub fn run(
                 st.frames += 1;
 
                 if let Some(preview) = &preview {
-                    preview.borrow_mut().draw(&edges, cfg.saturation, cfg.gamma);
+                    preview
+                        .borrow_mut()
+                        .draw(&edges, cfg.saturation, cfg.gamma, cfg.brightness);
                 }
 
                 if cfg.once {
                     // The dump and the logged colors are graded with the
                     // same knobs as the LED output, so a saved frame
-                    // previews what --saturation/--gamma do. At the
-                    // defaults the grading is a no-op, i.e. the raw
-                    // capture.
+                    // previews what --saturation/--gamma/--brightness do.
+                    // At the defaults the grading is a no-op, i.e. the
+                    // raw capture.
                     if let (Some(path), Some((rgb, sw, sh))) = (&cfg.dump, &dump) {
-                        let graded = grade_rgb8(rgb, cfg.saturation, cfg.gamma);
+                        let graded = grade_rgb8(rgb, cfg.saturation, cfg.gamma, cfg.brightness);
                         match write_png(path, *sw, *sh, &graded) {
                             Ok(()) => tracing::info!("wrote {path} ({sw}x{sh})"),
                             Err(e) => tracing::warn!("writing {path} failed: {e}"),
@@ -559,8 +566,8 @@ pub fn run(
                         let (Some(first), Some(last)) = (zones.first(), zones.last()) else {
                             continue;
                         };
-                        let f = grade_color(*first, cfg.saturation, cfg.gamma);
-                        let l = grade_color(*last, cfg.saturation, cfg.gamma);
+                        let f = grade_color(*first, cfg.saturation, cfg.gamma, cfg.brightness);
+                        let l = grade_color(*last, cfg.saturation, cfg.gamma, cfg.brightness);
                         tracing::info!(
                             "{}: first rgb({},{},{}) last rgb({},{},{}), {} zones",
                             name,

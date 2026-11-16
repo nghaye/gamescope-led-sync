@@ -352,12 +352,21 @@ pub fn apply_offset<T: Copy + Default>(chained: &[T], l: &Layout) -> Vec<T> {
         .collect()
 }
 
-/// The color grading, on one pixel: saturation gain then gamma, both
-/// no-ops at 1.0. The saturation compensates the muted look of
-/// gamescope's HDR-to-SDR capture; the gamma lifts its crushed
+/// The color grading, on one pixel, in the locked order of §5.4:
+/// saturation gain, then gamma, then the brightness multiplier, then
+/// the clamp to 0..255 (the `as u8` cast in to_u8 saturates). All three
+/// knobs are no-ops at 1.0. The saturation compensates the muted look
+/// of gamescope's HDR-to-SDR capture; the gamma lifts its crushed
 /// shadows. Kept in one place so the LED output and every diagnostic
 /// (dump, preview, log) grade identically.
-fn grade_one(mut r: f32, mut g: f32, mut b: f32, saturation: f32, gamma: f32) -> [f32; 3] {
+fn grade_one(
+    mut r: f32,
+    mut g: f32,
+    mut b: f32,
+    saturation: f32,
+    gamma: f32,
+    brightness: f32,
+) -> [f32; 3] {
     if saturation != 1.0 {
         let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
         r = y + (r - y) * saturation;
@@ -372,7 +381,7 @@ fn grade_one(mut r: f32, mut g: f32, mut b: f32, saturation: f32, gamma: f32) ->
         g = 255.0 * (g / 255.0).powf(gamma);
         b = 255.0 * (b / 255.0).powf(gamma);
     }
-    [r, g, b]
+    [r * brightness, g * brightness, b * brightness]
 }
 
 fn to_u8(c: [f32; 3]) -> [u8; 3] {
@@ -380,21 +389,26 @@ fn to_u8(c: [f32; 3]) -> [u8; 3] {
 }
 
 /// Grade a color for display, float 0..255 in, u8 out.
-pub fn grade_color(c: [f32; 3], saturation: f32, gamma: f32) -> [u8; 3] {
-    to_u8(grade_one(c[0], c[1], c[2], saturation, gamma))
+pub fn grade_color(c: [f32; 3], saturation: f32, gamma: f32, brightness: f32) -> [u8; 3] {
+    to_u8(grade_one(c[0], c[1], c[2], saturation, gamma, brightness))
 }
 
 /// The per-LED colors as bytes for the wire.
-pub fn shape_colors(vals: &[[f32; 3]], saturation: f32, gamma: f32) -> Vec<[u8; 3]> {
+pub fn shape_colors(
+    vals: &[[f32; 3]],
+    saturation: f32,
+    gamma: f32,
+    brightness: f32,
+) -> Vec<[u8; 3]> {
     vals.iter()
-        .map(|&c| grade_color(c, saturation, gamma))
+        .map(|&c| grade_color(c, saturation, gamma, brightness))
         .collect()
 }
 
 /// Grade a packed RGB frame in place-equivalent, for the dump: it lets
 /// a saved frame preview what the knobs do, at full spatial detail.
-pub fn grade_rgb8(rgb: &[u8], saturation: f32, gamma: f32) -> Vec<u8> {
-    if saturation == 1.0 && gamma == 1.0 {
+pub fn grade_rgb8(rgb: &[u8], saturation: f32, gamma: f32, brightness: f32) -> Vec<u8> {
+    if saturation == 1.0 && gamma == 1.0 && brightness == 1.0 {
         return rgb.to_vec();
     }
     rgb.as_chunks::<3>()
@@ -407,6 +421,7 @@ pub fn grade_rgb8(rgb: &[u8], saturation: f32, gamma: f32) -> Vec<u8> {
                 p[2] as f32,
                 saturation,
                 gamma,
+                brightness,
             ))
         })
         .collect()
@@ -926,10 +941,13 @@ mod tests {
     #[test]
     fn grading_is_identity_at_the_defaults() {
         assert_eq!(
-            shape_colors(&[[10.0, 20.0, 30.0]], 1.0, 1.0),
+            shape_colors(&[[10.0, 20.0, 30.0]], 1.0, 1.0, 1.0),
             vec![[10, 20, 30]]
         );
-        assert_eq!(grade_color([200.0, 100.0, 50.0], 1.0, 1.0), [200, 100, 50]);
+        assert_eq!(
+            grade_color([200.0, 100.0, 50.0], 1.0, 1.0, 1.0),
+            [200, 100, 50]
+        );
     }
 
     #[test]
@@ -937,11 +955,11 @@ mod tests {
         // A gray has every channel equal to its own luma, so no
         // saturation gain can move it, whatever the luma weights are.
         assert_eq!(
-            grade_color([100.0, 100.0, 100.0], 0.0, 1.0),
+            grade_color([100.0, 100.0, 100.0], 0.0, 1.0, 1.0),
             [100, 100, 100]
         );
         assert_eq!(
-            grade_color([100.0, 100.0, 100.0], 5.0, 1.0),
+            grade_color([100.0, 100.0, 100.0], 5.0, 1.0, 1.0),
             [100, 100, 100]
         );
     }
@@ -949,14 +967,14 @@ mod tests {
     #[test]
     fn zero_saturation_makes_gray() {
         // Fully desaturated, every channel collapses to the shared luma.
-        let [r, g, b] = grade_color([200.0, 100.0, 50.0], 0.0, 1.0);
+        let [r, g, b] = grade_color([200.0, 100.0, 50.0], 0.0, 1.0, 1.0);
         assert_eq!((r, g), (g, b));
     }
 
     #[test]
     fn saturation_above_one_widens_the_spread() {
         // A channel above the luma rises, one below it falls.
-        let [r, _g, b] = grade_color([200.0, 100.0, 60.0], 1.5, 1.0);
+        let [r, _g, b] = grade_color([200.0, 100.0, 60.0], 1.5, 1.0, 1.0);
         assert!(r > 200, "channel above luma should rise, got {r}");
         assert!(b < 60, "channel below luma should fall, got {b}");
     }
@@ -966,23 +984,59 @@ mod tests {
         // out = 255 * (v/255)^gamma. For v = 100: gamma 0.5 -> 160,
         // gamma 2.0 -> 39. Computed from the definition, not the code.
         assert_eq!(
-            grade_color([100.0, 100.0, 100.0], 1.0, 0.5),
+            grade_color([100.0, 100.0, 100.0], 1.0, 0.5, 1.0),
             [160, 160, 160]
         );
-        assert_eq!(grade_color([100.0, 100.0, 100.0], 1.0, 2.0), [39, 39, 39]);
+        assert_eq!(
+            grade_color([100.0, 100.0, 100.0], 1.0, 2.0, 1.0),
+            [39, 39, 39]
+        );
     }
 
     #[test]
     fn grading_clamps_out_of_range_channels() {
         // Saturation drives red past 255 and the others below 0; the
         // result must clamp, never wrap.
-        assert_eq!(grade_color([250.0, 0.0, 0.0], 2.0, 1.0), [255, 0, 0]);
+        assert_eq!(grade_color([250.0, 0.0, 0.0], 2.0, 1.0, 1.0), [255, 0, 0]);
+    }
+
+    #[test]
+    fn brightness_scales_after_gamma_not_before() {
+        // gamma 0.5 lifts 100 to 160, then brightness 0.5 halves it to
+        // 80. Applied before the gamma instead, 100 -> 50 -> 113.
+        assert_eq!(
+            grade_color([100.0, 100.0, 100.0], 1.0, 0.5, 0.5),
+            [80, 80, 80]
+        );
+    }
+
+    #[test]
+    fn brightness_zero_blacks_everything() {
+        assert_eq!(grade_color([200.0, 100.0, 50.0], 1.5, 0.8, 0.0), [0, 0, 0]);
+    }
+
+    #[test]
+    fn full_order_saturation_then_gamma_then_brightness() {
+        // saturation 0 collapses to the luma 117.65; gamma 2.0 maps it
+        // to 255 * (117.65/255)^2 = 54.28; brightness 0.5 -> 27.14 -> 27.
+        assert_eq!(
+            grade_color([200.0, 100.0, 50.0], 0.0, 2.0, 0.5),
+            [27, 27, 27]
+        );
+    }
+
+    #[test]
+    fn shape_colors_applies_brightness_to_the_wire_colors() {
+        assert_eq!(
+            shape_colors(&[[100.0; 3]], 1.0, 1.0, 0.5),
+            vec![[50, 50, 50]]
+        );
     }
 
     #[test]
     fn grade_rgb8_passes_through_at_the_defaults() {
         assert_eq!(
-            grade_rgb8(&[1, 2, 3, 4, 5, 6], 1.0, 1.0),
+            grade_rgb8(&[1, 2, 3, 4, 5, 6], 1.0, 1.0, 1.0),
             vec![1, 2, 3, 4, 5, 6]
         );
     }
@@ -991,7 +1045,7 @@ mod tests {
     fn grade_rgb8_grades_every_pixel() {
         // Two gray pixels under gamma 0.5: 100 -> 160, 50 -> 113.
         assert_eq!(
-            grade_rgb8(&[100, 100, 100, 50, 50, 50], 1.0, 0.5),
+            grade_rgb8(&[100, 100, 100, 50, 50, 50], 1.0, 0.5, 1.0),
             vec![160, 160, 160, 113, 113, 113],
         );
     }
