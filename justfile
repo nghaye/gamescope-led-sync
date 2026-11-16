@@ -33,3 +33,9 @@ build:
 [group('rust')]
 run *ARGS:
   {{ dev }} cargo run -- {{ ARGS }}
+
+# Install the pre-commit hook that base.just's `ci` comment assumes: a fresh
+# clone has no hook, so without this nothing runs `just ci` before a commit.
+[group('all')]
+install-hooks:
+  mkdir -p .git/hooks && printf '#!/bin/sh\nexec just ci\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && echo "installed .git/hooks/pre-commit (runs just ci on every commit)"
