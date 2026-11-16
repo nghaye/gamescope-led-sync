@@ -332,8 +332,11 @@ Runs as the session user. Constants: `CONFIG =
   View logs (modal with `get_logs`) / Test frame (D10: modal with
   `<img src="/plugins/gamescope-led-sync/data/last-frame.png?ts=…">`).
 - **WLED**: `TextField` host; numeric `TextField` port (1–65535).
-- **LED strip**: four numeric `TextField`s top/right/bottom/left (0–490, sum
-  constraint checked on save); `DropdownField` start (8 labelled options);
+- **LED strip**: four numeric `TextField`s:
+  top/right/bottom/left (0–490, sum constraint checked on save); directly
+  **below** these fields, a **read-only, non-editable** line shows the total LED
+  count `count = top + right + bottom + left` (recomputed live as any of the
+  four fields changes); `DropdownField` start (8 labelled options);
   `DropdownField` direction (Clockwise / Counterclockwise, viewed from the
   front); `SliderField` offset, **min −30, max +30, step 1** (D11), value shown.
 - **Image**: `SliderField` saturation (0–3, step 0.05), gamma (0.5–2.5, step
@@ -433,3 +436,6 @@ are now locked where indicated:
 12. Numeric fields in Decky = `TextField` with numeric validation (decky-frontend-lib
     has no dedicated number field) — already in §10.2, restated here.
 13. New files must pass the existing lint/format recipes (§12).
+14. Below the four per-edge LED count fields, the plugin shows a read-only,
+    non-editable total LED count (`top + right + bottom + left`), recomputed
+    live (§10.2).
