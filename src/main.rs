@@ -15,6 +15,7 @@ mod config;
 mod geometry;
 mod output;
 mod reload;
+mod setup;
 
 use {
     crate::config::{Config, OnNoSession},

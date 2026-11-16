@@ -41,6 +41,8 @@ Uninstall with `./deploy/install.sh --uninstall`: it disables and stops the unit
 
 Configuration lives in a TOML file; lookup order: `--config PATH` if given, else `$XDG_CONFIG_HOME/gamescope-led-sync/config.toml` (`~/.config/...`), else `/etc/gamescope-led-sync/config.toml`, else built-in defaults.
 
+First run? `gamescope-led-sync --setup` asks interactively for the WLED host and the strip layout (LED count per edge, start point, direction), tests the connection to the controller and lights each edge in its own color so you can check the counts, lets you go back and fix any setting, and writes the config file; every other parameter is left at its default.
+
 Value precedence: **CLI flag > config file > built-in default**. The daemon stats the file every tick and applies a valid change live at the next tick (≤ 1/fps ≈ 33 ms at 30 fps); an invalid or deleted file keeps the previous config active. Unknown keys are a hard error, so a typo cannot pass silently.
 
 | Section       | Key             | Default       | Bound / codes                          |
@@ -66,7 +68,7 @@ See [deploy/config.toml.example](./deploy/config.toml.example) for a fully comme
 
 ### CLI overrides
 
-One flag per config field, CLI-only flags aside: `--config PATH`, `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, plus debug-only `--once`, `--dump PNG`, `--preview`. Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
+One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, plus debug-only `--once`, `--dump PNG`, `--preview`. Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
 
 ## Service management
 
