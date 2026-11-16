@@ -1,0 +1,30 @@
+{
+  "name": "gamescope-led-sync",
+  "version": "0.1.0",
+  "description": "Decky Loader plugin for gamescope-led-sync: live configuration of the WLED ambient backlight daemon",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w",
+    "check": "tsc --noEmit && biome lint --error-on-warnings ."
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@decky/api": "^1.1.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-replace": "^5.0.5",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "decky-frontend-lib": "^3.25.0",
+    "rollup": "^4.9.6",
+    "rollup-plugin-import-assets": "^1.1.1",
+    "tslib": "^2.6.2",
+    "typescript": "^5.3.3"
+  }
+}

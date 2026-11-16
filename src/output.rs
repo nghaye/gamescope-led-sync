@@ -85,6 +85,12 @@ impl WledSender {
         let _ = self.sock.send_to(&packet, self.addr);
         self.sent += 1;
     }
+
+    /// timeout_s is carried in every packet header, so a reload can
+    /// update it in place without recreating the sender (§7).
+    pub fn set_timeout(&mut self, timeout_s: u8) {
+        self.timeout_s = timeout_s;
+    }
 }
 
 fn crc32(seed: u32, data: &[u8]) -> u32 {
@@ -165,7 +171,7 @@ impl Preview {
         Preview { drawn: false }
     }
 
-    pub fn draw(&mut self, e: &EdgeColors, saturation: f32, gamma: f32) {
+    pub fn draw(&mut self, e: &EdgeColors, saturation: f32, gamma: f32, brightness: f32) {
         let mut out = io::stdout();
         if !out.is_terminal() {
             return;
@@ -189,8 +195,8 @@ impl Preview {
                     0
                 };
                 // Grade the bars like the LED output, so the preview
-                // shows the effect of --saturation and --gamma.
-                let z = grade_color(zones[idx], saturation, gamma);
+                // shows the effect of --saturation/--gamma/--brightness.
+                let z = grade_color(zones[idx], saturation, gamma, brightness);
                 text.push_str(&format!("\x1b[48;2;{};{};{}m ", z[0], z[1], z[2]));
             }
             text.push_str("\x1b[0m\x1b[K\n");

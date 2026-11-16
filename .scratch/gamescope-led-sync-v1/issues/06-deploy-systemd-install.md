@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (the example must parse against the final schema)
 
-**Status:** ready-for-agent
+**Status:** done (commit 2af1538 on vibe/implement-spec-v1-717efe)
 
 - [ ] Unit file matches §8 exactly and passes the repo's yamllint recipe
 - [ ] `config.toml.example` passes tombi and parses/validates against the 02 schema

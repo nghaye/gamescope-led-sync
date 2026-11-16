@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done (commit c3a15fa on vibe/implement-spec-v1-717efe)
 
 - [ ] README covers all §13 sections and passes the markdownlint `just` recipe
 - [ ] Version `0.1.0` in `Cargo.toml`; no `../python` reference left in doc comments

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** done (commit 2ba0b70 on vibe/implement-spec-v1-717efe)
 
 - [ ] Grading pipeline order per §5.4 with `brightness` added; defaults are no-ops
 - [ ] Smoothing resets on `count` change (existing length check)

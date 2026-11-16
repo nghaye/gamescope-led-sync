@@ -1,0 +1,66 @@
+# gamescope-led-sync configuration (SPEC §4.2).
+#
+# This file is copied to ~/.config/gamescope-led-sync/config.toml by
+# install.sh only if that file does not exist yet; it is never
+# overwritten afterwards. Every key is optional: anything left out falls
+# back to the built-in default. Unknown keys are a hard error, so a typo
+# cannot pass silently. The daemon reloads this file live at the next
+# tick (≤ 1/fps), no restart needed.
+#
+# Value precedence: CLI flag > this file > built-in default.
+
+[wled]
+# WLED controller hostname (mDNS) or IP, non-empty.
+host      = "wled.local"
+# UDP realtime port, 1..65535 (WLED default: 21324).
+port      = 21324
+# Seconds WLED stays in realtime mode after the last packet, 1..255.
+# Sent in every DRGB packet header; file-only (not in the Decky UI).
+timeout_s = 2
+
+[layout]
+# LED count per edge, 0..490 each, sum >= 1 and sum + max(offset, 0) <= 490.
+# The values below are the owner's 65" TV strip (~268 LEDs at 60/m).
+top    = 86
+right  = 48
+bottom = 86
+left   = 48
+# Start point holding the strip's first LED:
+# bl|bc|br|rc|tr|tc|tl|lc (corners + edge midpoints).
+# The owner's strip starts at the bottom-center.
+start = "bc"
+# Strip direction from the start point, viewed from the front:
+# clockwise|counterclockwise.
+direction = "clockwise"
+# LED offset. offset > 0: the first `offset` physical LEDs are sent black
+# (packet length = count + offset). offset < 0: the chain is rotated.
+offset = 0
+
+[processing]
+# Processing and send rate, 1..240 (Decky UI: 10..60).
+fps = 30
+# Subsampled frame height for the color math, 1..16384 (UI: 120..480).
+sample_height = 240
+# Edge depth each LED averages, as a fraction of screen height, > 0 and < 1
+# (UI: 0.02..0.20).
+band_frac   = 0.08
+# Saturation gain, >= 0 (UI: 0..3).
+saturation = 1.0
+# Gamma shaping, > 0 (UI: 0.5..2.5).
+gamma = 1.0
+# Smoothing factor per frame, > 0; 1.0 disables smoothing (UI: 0.05..1.0).
+smooth = 0.5
+# Brightness multiplier, 0.0..1.0 (UI: 0..100 %).
+brightness = 1.0
+
+[behavior]
+# What to send while no gamescope session is connected:
+# preset (send nothing; WLED falls back to its own preset after timeout_s),
+# keep-last (resend the last colors every 1 s), or black (send black).
+# File-only (not in the Decky UI).
+on_no_session = "preset"
+
+[capture]
+# media.name of the gamescope PipeWire node; advanced, file-only escape
+# hatch if your setup names the node differently.
+node_name = "gamescope"

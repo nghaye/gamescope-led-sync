@@ -9,6 +9,7 @@ use {
             shape_colors,
         },
         output::{Preview, WledSender, write_png},
+        reload::{self, Reloader},
     },
     pipewire::{
         self as pw,
@@ -50,6 +51,12 @@ const SPA_TYPE_OBJECT_FORMAT: u32 = 0x40003;
 const KEEPALIVE: Duration = Duration::from_secs(1);
 const STATS_EVERY: Duration = Duration::from_secs(5);
 const DISCOVERY_ONCE_LIMIT: Duration = Duration::from_secs(15);
+
+// The session timer fires at this fine fixed quantum; the tick body
+// paces processing and sending at the configured fps, so a runtime fps
+// change takes effect without re-arming the timer (§7). 4 ms is at most
+// the fastest allowed tick (1/240 s).
+const TICK_QUANTUM: Duration = Duration::from_millis(4);
 
 // Set by the signal handler, polled by the loops. A global is enough:
 // there is one process-wide shutdown, and an async-signal handler may
@@ -113,8 +120,8 @@ pub enum CaptureError {
 /// everywhere, NVIDIA included. Size is a wide range because gamescope
 /// advertises its size as fixed; the custom requested_size is what
 /// makes it renegotiate to a small capture.
-fn format_pod(cfg: &Config) -> Vec<u8> {
-    let h = cfg.sample_height;
+fn format_pod(sample_height: u32) -> Vec<u8> {
+    let h = sample_height;
     let w = h.saturating_mul(16) / 9; // rough aspect; gamescope aspect-fits and rounds
     let obj = Object {
         type_: SPA_TYPE_OBJECT_FORMAT,
@@ -299,12 +306,18 @@ struct State {
     frames: u64,
     proc: Duration,
     end: Option<Reason>,
+    next_due: Instant,
 }
 
+/// One capture session. The config, the sender, and the last colors are
+/// shared with the caller so a live reload (§7) and the sender retry
+/// (§6.0) act on the values this session uses.
 pub fn run(
-    cfg: &Config,
-    sender: Option<&Rc<RefCell<WledSender>>>,
+    cfg: &Rc<RefCell<Config>>,
+    sender: &Rc<RefCell<Option<WledSender>>>,
     last_colors: &Rc<RefCell<Option<Vec<[u8; 3]>>>>,
+    reloader: &Rc<RefCell<Reloader>>,
+    last_sender_try: &Rc<Cell<Instant>>,
 ) -> Result<Reason, CaptureError> {
     let mainloop = MainLoopRc::new(None).map_err(|source| CaptureError::Pipewire {
         op: "main loop",
@@ -321,7 +334,11 @@ pub fn run(
             source,
         })?;
 
-    let Some(node_id) = discover(&mainloop, &core, cfg.once, &cfg.node_name)? else {
+    let (once, node_name) = {
+        let c = cfg.borrow();
+        (c.once, c.node_name.clone())
+    };
+    let Some(node_id) = discover(&mainloop, &core, once, &node_name)? else {
         if interrupted() {
             return Ok(Reason::Interrupted);
         }
@@ -360,9 +377,13 @@ pub fn run(
         frames: 0,
         proc: Duration::ZERO,
         end: None,
+        next_due: now,
     }));
 
-    let preview = cfg.preview.then(|| Rc::new(RefCell::new(Preview::new())));
+    let preview = cfg
+        .borrow()
+        .preview
+        .then(|| Rc::new(RefCell::new(Preview::new())));
 
     let _listener = stream
         .add_local_listener_with_user_data(())
@@ -384,7 +405,7 @@ pub fn run(
         })
         .param_changed({
             let state = state.clone();
-            let sample_height = cfg.sample_height as usize;
+            let sample_height = cfg.borrow().sample_height as usize;
             move |_stream, _ud, id, param| {
                 if id != ParamType::Format.as_raw() {
                     return;
@@ -418,7 +439,7 @@ pub fn run(
         .register()
         .map_err(|source| CaptureError::Pipewire { op: "stream listener", source })?;
 
-    let pod_bytes = format_pod(cfg);
+    let pod_bytes = format_pod(cfg.borrow().sample_height);
     let pod = Pod::from_bytes(&pod_bytes).ok_or(CaptureError::BuildPod)?;
     stream
         .connect(
@@ -432,21 +453,27 @@ pub fn run(
             source,
         })?;
 
-    let tick = Duration::from_secs_f64(1.0 / cfg.fps);
     let timer = mainloop.loop_().add_timer({
         let stream = stream.clone();
         let state = state.clone();
-        let sender = sender.cloned();
+        let sender = sender.clone();
         let last_colors = last_colors.clone();
         let preview = preview.clone();
         let ml = mainloop.clone();
         let cfg = cfg.clone();
+        let reloader = reloader.clone();
+        let last_sender_try = last_sender_try.clone();
         move |_expirations| {
             if QUIT.load(Ordering::SeqCst) {
                 state.borrow_mut().end = Some(Reason::Interrupted);
                 ml.quit();
                 return;
             }
+
+            // Live reload (§7) and sender retry (§6.0), once per firing.
+            reload::reload_if_changed(&cfg, &sender, &reloader);
+            let c = cfg.borrow().clone();
+            reload::ensure_sender(&c, &sender, &last_sender_try);
 
             let mut st = state.borrow_mut();
             let st = &mut *st;
@@ -480,6 +507,14 @@ pub fn run(
             }
 
             let now = Instant::now();
+            // Processing and sending run at the configured fps; the
+            // pipewire timer fires at a finer fixed quantum, so a
+            // runtime fps change applies without re-arming it (§7).
+            if now < st.next_due {
+                return;
+            }
+            st.next_due = now + Duration::from_secs_f64(1.0 / c.fps.max(1.0));
+
             let usable = st.fresh
                 && st.width > 0
                 && st.stride >= st.width * 4
@@ -488,7 +523,7 @@ pub fn run(
             if usable {
                 st.fresh = false;
                 let t0 = Instant::now();
-                let step = (st.height / (cfg.sample_height as usize).max(1)).max(1);
+                let step = (st.height / (c.sample_height as usize).max(1)).max(1);
                 let (edges, colors_f, dump) = {
                     let frame = Frame {
                         data: &st.frame,
@@ -497,13 +532,13 @@ pub fn run(
                         stride: st.stride,
                         step,
                     };
-                    let edges = edge_means(&frame, cfg.band_frac, &cfg.layout);
-                    let colors_f = chain(&edges, &cfg.layout);
-                    let dump = (cfg.once && cfg.dump.is_some()).then(|| sampled_rgb(&frame));
+                    let edges = edge_means(&frame, c.band_frac, &c.layout);
+                    let colors_f = chain(&edges, &c.layout);
+                    let dump = (c.once && c.dump.is_some()).then(|| sampled_rgb(&frame));
                     (edges, colors_f, dump)
                 };
 
-                let replace = cfg.smooth >= 1.0
+                let replace = c.smooth >= 1.0
                     || st
                         .smoothed
                         .as_ref()
@@ -513,36 +548,43 @@ pub fn run(
                 } else if let Some(prev) = &mut st.smoothed {
                     for (p, n) in prev.iter_mut().zip(colors_f.iter()) {
                         for k in 0..3 {
-                            p[k] += cfg.smooth * (n[k] - p[k]);
+                            p[k] += c.smooth * (n[k] - p[k]);
                         }
                     }
                 }
-                let graded = shape_colors(st.smoothed.as_ref().unwrap(), cfg.saturation, cfg.gamma);
+                let graded = shape_colors(
+                    st.smoothed.as_ref().unwrap(),
+                    c.saturation,
+                    c.gamma,
+                    c.brightness,
+                );
                 // The DRGB packet is the graded chain with the offset
                 // applied (black head or rotation), so WLED's segment
                 // sees packet_len LEDs starting at index 0.
-                let colors = apply_offset(&graded, &cfg.layout);
+                let colors = apply_offset(&graded, &c.layout);
                 st.proc += t0.elapsed();
 
-                if let Some(sender) = &sender {
-                    sender.borrow_mut().send(&colors);
+                if let Some(s) = sender.borrow_mut().as_mut() {
+                    s.send(&colors);
                     st.last_send = now;
                 }
                 *last_colors.borrow_mut() = Some(colors);
                 st.frames += 1;
 
                 if let Some(preview) = &preview {
-                    preview.borrow_mut().draw(&edges, cfg.saturation, cfg.gamma);
+                    preview
+                        .borrow_mut()
+                        .draw(&edges, c.saturation, c.gamma, c.brightness);
                 }
 
-                if cfg.once {
+                if c.once {
                     // The dump and the logged colors are graded with the
                     // same knobs as the LED output, so a saved frame
-                    // previews what --saturation/--gamma do. At the
-                    // defaults the grading is a no-op, i.e. the raw
-                    // capture.
-                    if let (Some(path), Some((rgb, sw, sh))) = (&cfg.dump, &dump) {
-                        let graded = grade_rgb8(rgb, cfg.saturation, cfg.gamma);
+                    // previews what --saturation/--gamma/--brightness do.
+                    // At the defaults the grading is a no-op, i.e. the
+                    // raw capture.
+                    if let (Some(path), Some((rgb, sw, sh))) = (&c.dump, &dump) {
+                        let graded = grade_rgb8(rgb, c.saturation, c.gamma, c.brightness);
                         match write_png(path, *sw, *sh, &graded) {
                             Ok(()) => tracing::info!("wrote {path} ({sw}x{sh})"),
                             Err(e) => tracing::warn!("writing {path} failed: {e}"),
@@ -559,8 +601,8 @@ pub fn run(
                         let (Some(first), Some(last)) = (zones.first(), zones.last()) else {
                             continue;
                         };
-                        let f = grade_color(*first, cfg.saturation, cfg.gamma);
-                        let l = grade_color(*last, cfg.saturation, cfg.gamma);
+                        let f = grade_color(*first, c.saturation, c.gamma, c.brightness);
+                        let l = grade_color(*last, c.saturation, c.gamma, c.brightness);
                         tracing::info!(
                             "{}: first rgb({},{},{}) last rgb({},{},{}), {} zones",
                             name,
@@ -577,22 +619,21 @@ pub fn run(
                     ml.quit();
                     return;
                 }
-            } else if let Some(sender) = &sender {
+            } else if now.duration_since(st.last_send) >= KEEPALIVE {
                 // Quiet stream: a static screen is normal (gamescope is
                 // damage-driven). Keep WLED in realtime mode so it does
                 // not fall back to its preset mid-game. Actual node
                 // death arrives via state_changed instead.
-                if now.duration_since(st.last_send) >= KEEPALIVE
-                    && let Some(colors) = last_colors.borrow().as_ref()
-                {
-                    sender.borrow_mut().send(colors);
+                let colors = last_colors.borrow().clone();
+                if let (Some(s), Some(colors)) = (sender.borrow_mut().as_mut(), colors) {
+                    s.send(&colors);
                     st.last_send = now;
                 }
             }
 
             if st.frames > 0 && now.duration_since(st.stats_at) >= STATS_EVERY {
                 let elapsed = now.duration_since(st.stats_at).as_secs_f64();
-                let sent = sender.as_ref().map_or(0, |s| s.borrow().sent);
+                let sent = sender.borrow().as_ref().map_or(0, |s| s.sent);
                 tracing::info!(
                     "{:.1} frames/s, {:.1} ms processing, {} packets sent",
                     st.frames as f64 / elapsed,
@@ -606,7 +647,7 @@ pub fn run(
         }
     });
     timer
-        .update_timer(Some(tick), Some(tick))
+        .update_timer(Some(TICK_QUANTUM), Some(TICK_QUANTUM))
         .into_result()
         .map_err(|source| CaptureError::Timer {
             op: "session",

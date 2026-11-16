@@ -1,0 +1,13 @@
+[Unit]
+Description=gamescope-led-sync — ambient LED backlight for gamescope (WLED)
+After=pipewire.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/gamescope-led-sync
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target
