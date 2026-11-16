@@ -68,8 +68,8 @@ Crate version: `0.1.0`.
 4. else built-in defaults (with a warning logged).
 
 Value precedence: **CLI flag > config file > built-in default**.
-CLI-only flags (never in the file): `--config`, `--dry-run`, `--once`, `--dump`,
-`--preview`.
+CLI-only flags (never in the file): `--config`, `--setup`, `--dry-run`, `--once`,
+`--dump`, `--preview`.
 
 ### 4.2 Schema, defaults, bounds
 
@@ -126,7 +126,14 @@ plus one flag per config field: `--wled HOST`, `--port`, `--timeout`,
 `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction
 <clockwise|counterclockwise>` (replaces `--counterclockwise`), `--offset N`,
 `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`,
-`--brightness`, and debug-only `--once`, `--dump PNG`, `--preview`.
+`--brightness`, and debug-only `--once`, `--dump PNG`, `--preview`, plus
+`--setup`: interactive first-run setup that asks for the WLED host and the
+strip layout (LED counts per edge, start point, direction), probes the
+controller over HTTP (`GET /json/info`) when the host is entered, lights
+each edge in its own color to check the counts, lets the user go back and
+modify any setting, and finally writes the config file (default lookup
+path, or `--config PATH`) with the other parameters left at their defaults;
+it exits without starting the daemon.
 
 ## 5. LED strip geometry (§ geometry.rs)
 

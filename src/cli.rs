@@ -6,6 +6,7 @@ use {
     crate::{
         config::{self, ConfigError},
         geometry::{Direction, Layout, StartPoint},
+        setup,
     },
     clap::{CommandFactory, FromArgMatches, Parser, error::ErrorKind, parser::ValueSource},
     std::path::PathBuf,
@@ -21,6 +22,12 @@ struct Cli {
     /// then /etc/gamescope-led-sync/config.toml, then built-in defaults)
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
+
+    /// Interactive setup: ask for the WLED host and the strip layout,
+    /// probe the controller, test the strip, write the config file
+    /// (default lookup path, or --config PATH), and exit
+    #[arg(long)]
+    setup: bool,
 
     /// Never send anything to WLED, log only
     #[arg(long)]
@@ -129,6 +136,10 @@ pub fn parse() -> Parsed {
         Ok(cli) => cli,
         Err(e) => e.exit(),
     };
+    // --setup is a mode, not a flag: it never reaches the daemon loop.
+    if cli.setup {
+        std::process::exit(setup::run(cli.config.as_deref()));
+    }
     let discovered = config::discover(cli.config.as_deref()).unwrap_or_else(|e| bail(e));
     match &discovered.path {
         Some(path) => tracing::info!("config: {} ({})", path.display(), discovered.source),
@@ -365,5 +376,16 @@ mod tests {
     fn counterclockwise_flag_is_gone() {
         let args = ["gamescope-led-sync", "--counterclockwise"];
         assert!(Cli::command().try_get_matches_from(args).is_err());
+    }
+
+    #[test]
+    fn setup_flag_parses_and_combines_with_config() {
+        let (cli, _) = cli_from(&["gamescope-led-sync"]);
+        assert!(!cli.setup);
+        let (cli, _) = cli_from(&["gamescope-led-sync", "--setup"]);
+        assert!(cli.setup);
+        let (cli, _) = cli_from(&["gamescope-led-sync", "--setup", "--config", "/tmp/x.toml"]);
+        assert!(cli.setup);
+        assert_eq!(cli.config, Some(PathBuf::from("/tmp/x.toml")));
     }
 }

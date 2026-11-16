@@ -70,6 +70,7 @@ fn help_lists_the_full_v1_cli_surface() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     for flag in [
         "--config",
+        "--setup",
         "--dry-run",
         "--wled",
         "--port",
@@ -95,4 +96,24 @@ fn help_lists_the_full_v1_cli_surface() {
         assert!(stdout.contains(flag), "help must list {flag}:\n{stdout}");
     }
     assert!(!stdout.contains("--counterclockwise"), "help must not list it");
+}
+
+/// --setup with EOF on stdin (non-interactive) must quit cleanly with
+/// exit code 0 and write nothing.
+#[test]
+fn setup_with_eof_on_stdin_quits_without_writing() {
+    let dir = std::env::temp_dir().join(format!("gls-setup-cli-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config.toml");
+    let out = Command::new(BIN)
+        .args(["--setup", "--config", config.to_str().unwrap()])
+        .env("XDG_CONFIG_HOME", "/nonexistent-gls-cli-test")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "stdout: {stdout}");
+    assert!(stdout.contains("no config file written"), "stdout: {stdout}");
+    assert!(!config.exists(), "setup must not write on EOF");
+    let _ = fs::remove_dir_all(&dir);
 }
