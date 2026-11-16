@@ -4,7 +4,10 @@
 use {
     crate::{
         cli::Config,
-        geometry::{Frame, chain, edge_means, grade_color, grade_rgb8, sampled_rgb, shape_colors},
+        geometry::{
+            Frame, apply_offset, chain, edge_means, grade_color, grade_rgb8, sampled_rgb,
+            shape_colors,
+        },
         output::{Preview, WledSender, write_png},
     },
     pipewire::{
@@ -509,7 +512,11 @@ pub fn run(
                         }
                     }
                 }
-                let colors = shape_colors(st.smoothed.as_ref().unwrap(), cfg.saturation, cfg.gamma);
+                let graded = shape_colors(st.smoothed.as_ref().unwrap(), cfg.saturation, cfg.gamma);
+                // The DRGB packet is the graded chain with the offset
+                // applied (black head or rotation), so WLED's segment
+                // sees packet_len LEDs starting at index 0.
+                let colors = apply_offset(&graded, &cfg.layout);
                 st.proc += t0.elapsed();
 
                 if let Some(sender) = &sender {
