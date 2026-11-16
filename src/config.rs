@@ -55,6 +55,7 @@ pub struct Config {
     pub brightness: f32,
     pub on_no_session: OnNoSession,
     pub node_name: String,
+    pub dry_run: bool,
     pub once: bool,
     pub dump: Option<String>,
     pub preview: bool,
@@ -215,10 +216,17 @@ impl Config {
             brightness: 1.0,
             on_no_session: OnNoSession::Preset,
             node_name: "gamescope".to_string(),
+            dry_run: false,
             once: false,
             dump: None,
             preview: false,
         }
+    }
+
+    /// Whether packets go out at all: `--dry-run` never sends, and
+    /// with no WLED host there is nothing to send to (SPEC §4.4).
+    pub fn sends(&self) -> bool {
+        !self.dry_run && self.wled.is_some()
     }
 
     /// Read, parse, and validate a config file.
@@ -596,6 +604,18 @@ mod tests {
     #[test]
     fn builtin_defaults_validate() {
         Config::defaults().validate().unwrap();
+    }
+
+    #[test]
+    fn dry_run_never_sends_even_with_a_host() {
+        let mut cfg = Config::defaults();
+        cfg.wled = Some("wled.local".to_string());
+        assert!(cfg.sends());
+        cfg.dry_run = true;
+        assert!(!cfg.sends(), "--dry-run must suppress all sending");
+        cfg.dry_run = false;
+        cfg.wled = None;
+        assert!(!cfg.sends(), "no host means nothing to send to");
     }
 
     #[test]
