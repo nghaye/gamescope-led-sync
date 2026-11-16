@@ -116,7 +116,7 @@ export default definePlugin(() => {
   };
 
   const patch = <S extends keyof Cfg, K extends keyof Cfg[S]>(section: S, key: K, value: Cfg[S][K]) => {
-    save({ ...cfg, [section]: { ...cfg[section], [key]: value } });
+    save({ ...cfg, [section]: { ...cfg[section], [key]: value } } as Cfg);
   };
 
   // Numeric text field: parse on change, ignore unparsable input (the

@@ -26,8 +26,9 @@ One small Rust binary links libpipewire and runs on Linux, with near-zero cost t
 
 ## Install
 
+Clone [this repository](https://github.com/nghaye/gamescope-led-sync), then:
+
 ```sh
-git clone https://github.com/nghaye/gamescope-led-sync.git
 cd gamescope-led-sync
 ./deploy/install.sh --enable
 ```
