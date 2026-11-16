@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03, 04
 
-**Status:** ready-for-agent
+**Status:** done (commit d0d4a6d on vibe/implement-spec-v1-717efe)
 
 - [ ] No exit when `WledSender::new` fails; senderless retry every 5 s and on reload
 - [ ] Per-tick stat-based reload with atomic swap and all per-field effects of §7

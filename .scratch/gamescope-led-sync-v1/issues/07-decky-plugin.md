@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03 (`test_frame` relies on `--config` / `--once` / `--dump`)
 
-**Status:** ready-for-agent
+**Status:** done (commit 47fd000 on vibe/implement-spec-v1-717efe)
 
 - [ ] Backend methods match the §10.1 table; `save_config` is atomic + validated; the `test_frame` guard works
 - [ ] Frontend controls match the §10.2 mapping incl. D9 slider ranges and the D11 offset range
