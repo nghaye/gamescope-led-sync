@@ -5,10 +5,9 @@
 //! streams them to a WLED controller as DRGB realtime packets over
 //! UDP. The HDMI signal is never touched.
 //!
-//! Functionally identical to the Python implementation in ../python,
-//! with one difference: this client speaks gamescope's custom
-//! `requested_size` negotiation, so gamescope downscales the capture
-//! on the GPU and ships small frames.
+//! This client speaks gamescope's custom `requested_size`
+//! negotiation, so gamescope downscales the capture on the GPU and
+//! ships small frames.
 
 mod capture;
 mod cli;
