@@ -2,7 +2,7 @@
 //! of the program reads.
 
 use {
-    crate::geometry::{Corner, Layout},
+    crate::geometry::{Direction, Layout, StartPoint},
     clap::{CommandFactory, Parser, error::ErrorKind},
 };
 
@@ -67,8 +67,8 @@ struct Cli {
     #[arg(long, default_value_t = 75)]
     left: usize,
 
-    /// Corner holding the strip's first LED
-    #[arg(long, value_parser = ["bl", "tl", "tr", "br"], default_value = "bl")]
+    /// Start point holding the strip's first LED
+    #[arg(long, value_parser = StartPoint::CODES, default_value = "bl")]
     start: String,
 
     /// Strip runs counterclockwise, seen from the front
@@ -127,15 +127,17 @@ pub fn parse() -> Config {
         bail("--saturation must be zero or a positive number");
     }
 
-    // clap has already restricted --start to the four valid values.
-    let start = Corner::parse(&cli.start).expect("clap validated --start");
+    // clap has already restricted --start to the eight valid codes.
+    let start = StartPoint::parse(&cli.start).expect("clap validated --start");
+    let direction = Direction::parse(if cli.counterclockwise {
+        "counterclockwise"
+    } else {
+        "clockwise"
+    })
+    .expect("known direction code");
+    // No --offset flag yet; the CLI surface lands with the config ticket.
     let layout = Layout::new(
-        cli.top,
-        cli.right,
-        cli.bottom,
-        cli.left,
-        start,
-        !cli.counterclockwise,
+        cli.top, cli.right, cli.bottom, cli.left, start, direction, 0,
     )
     .unwrap_or_else(|e| bail(e));
 

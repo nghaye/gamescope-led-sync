@@ -37,11 +37,7 @@ fn main() -> ExitCode {
         l.left(),
         l.count(),
         l.start().name(),
-        if l.clockwise() {
-            "clockwise"
-        } else {
-            "counterclockwise"
-        },
+        l.direction().name(),
     );
     // The WLED sender and the last colors sent live here, across
     // sessions, so a reconnect keeps the LEDs lit instead of dropping
