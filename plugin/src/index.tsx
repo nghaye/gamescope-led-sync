@@ -257,6 +257,14 @@ export default definePlugin(() => {
           <TextField label="Left (0–490)" value={String(layout.left)} onChange={(e) => patchNum("layout", "left", e.target.value)} />
         </PanelSectionRow>
         <PanelSectionRow>
+          <Field
+            label="Total LEDs (read-only)"
+            description="count = top + right + bottom + left, recomputed live"
+          >
+            {layout.top + layout.right + layout.bottom + layout.left}
+          </Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
           <DropdownField
             label="Start point"
             rgOptions={START_OPTIONS}
