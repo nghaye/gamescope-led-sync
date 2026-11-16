@@ -245,7 +245,8 @@ mod tests {
         fs::write(&path, "[wled]\nport = 0\n").unwrap();
         assert!(r.poll(&cur).is_none(), "an invalid file must not swap");
         assert!(r.poll(&cur).is_none(), "no warn spam on every tick");
-        fs::write(&path, "[wled]\nport = 3\n").unwrap();
+        // Different length on purpose: the reload signature is mtime+len.
+        fs::write(&path, "[wled]\nport = 3\n# ok\n").unwrap();
         let new = r.poll(&cur).expect("fixing the file reloads it");
         assert_eq!(new.port, 3);
         fs::remove_dir_all(&dir).unwrap();
@@ -274,7 +275,8 @@ mod tests {
         cur.once = true;
         cur.dump = Some("frame.png".to_string());
         cur.preview = true;
-        fs::write(&path, "[processing]\nfps = 90\n").unwrap();
+        // Different length on purpose: the reload signature is mtime+len.
+        fs::write(&path, "[processing]\nfps = 90\n# tuned\n").unwrap();
         let new = r.poll(&cur).unwrap();
         assert!(new.dry_run && new.once && new.preview);
         assert_eq!(new.dump.as_deref(), Some("frame.png"));
@@ -291,7 +293,8 @@ mod tests {
         let sender: Rc<RefCell<Option<WledSender>>> = Rc::new(RefCell::new(None));
         let reloader = Rc::new(RefCell::new(Reloader::new(Some(path.clone()))));
         assert!(reload_if_changed(&cfg, &sender, &reloader).is_none());
-        fs::write(&path, "[processing]\nfps = 90\n").unwrap();
+        // Different length on purpose: the reload signature is mtime+len.
+        fs::write(&path, "[processing]\nfps = 90\n# tuned\n").unwrap();
         let new = reload_if_changed(&cfg, &sender, &reloader).expect("changed file swaps");
         assert_eq!(new.fps, 90.0);
         assert_eq!(cfg.borrow().fps, 90.0, "the shared config was swapped");

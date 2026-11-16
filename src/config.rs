@@ -619,6 +619,18 @@ mod tests {
     }
 
     #[test]
+    fn shipped_example_config_parses_and_validates() {
+        // install.sh copies deploy/config.toml.example as the initial
+        // user config, so it must always parse and validate against the
+        // schema (SPEC §9, ticket 06).
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("deploy/config.toml.example");
+        let cfg = Config::load(&path).expect("deploy/config.toml.example must be valid");
+        assert_eq!(cfg.layout.count(), 268);
+        assert_eq!(cfg.layout.start(), StartPoint::Bc);
+        assert_eq!(cfg.layout.direction(), Direction::Clockwise);
+    }
+
+    #[test]
     fn missing_explicit_file_is_a_read_error() {
         assert!(matches!(
             Config::load(Path::new("/nonexistent/gamescope-led-sync/config.toml")),
