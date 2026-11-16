@@ -172,11 +172,12 @@ fn format_pod(cfg: &Config) -> Vec<u8> {
         .into_inner()
 }
 
-/// Wait until gamescope's video node exists; return its global id.
+/// Wait until the capture node exists; return its global id.
 ///
-/// Matches media.name, not node.name: NixOS wraps the binary, which
-/// turns node.name into ".gamescope-wrapped". media.name stays
-/// "gamescope" on every distribution.
+/// Matches media.name against the configured node name (default
+/// "gamescope"), not node.name: NixOS wraps the binary, which turns
+/// node.name into ".gamescope-wrapped". media.name stays "gamescope"
+/// on every distribution.
 ///
 /// The registry's global event only carries a node's terse properties
 /// (node.name, media.class, ...); media.name is in the full node info.
@@ -185,7 +186,9 @@ fn discover(
     mainloop: &MainLoopRc,
     core: &pw::core::CoreRc,
     once: bool,
+    node_name: &str,
 ) -> Result<Option<u32>, CaptureError> {
+    let node_name = node_name.to_string();
     let registry = Rc::new(
         core.get_registry_rc()
             .map_err(|source| CaptureError::Pipewire {
@@ -205,6 +208,7 @@ fn discover(
             let found = found.clone();
             let candidates = candidates.clone();
             let ml = mainloop.clone();
+            let node_name = node_name.clone();
             move |global| {
                 if global.type_ != ObjectType::Node || found.get().is_some() {
                     return;
@@ -230,10 +234,11 @@ fn discover(
                     .info({
                         let found = found.clone();
                         let ml = ml.clone();
+                        let node_name = node_name.clone();
                         move |info| {
                             let hit = info
                                 .props()
-                                .is_some_and(|p| p.get("media.name") == Some("gamescope"));
+                                .is_some_and(|p| p.get("media.name") == Some(node_name.as_str()));
                             if hit && found.get().is_none() {
                                 found.set(Some(id));
                                 ml.quit();
@@ -316,7 +321,7 @@ pub fn run(
             source,
         })?;
 
-    let Some(node_id) = discover(&mainloop, &core, cfg.once)? else {
+    let Some(node_id) = discover(&mainloop, &core, cfg.once, &cfg.node_name)? else {
         if interrupted() {
             return Ok(Reason::Interrupted);
         }

@@ -1,32 +1,27 @@
-//! Command-line parsing (clap derive) into the validated Config the rest
-//! of the program reads.
+//! Command-line parsing (clap derive), merged with the config file
+//! into the validated Config the rest of the program reads. Precedence:
+//! CLI flag > config file > built-in default (SPEC §4.1).
 
 use {
-    crate::geometry::{Direction, Layout, StartPoint},
-    clap::{CommandFactory, Parser, error::ErrorKind},
+    crate::{
+        config,
+        geometry::{Direction, Layout, StartPoint},
+    },
+    clap::{CommandFactory, FromArgMatches, Parser, error::ErrorKind, parser::ValueSource},
+    std::path::PathBuf,
 };
 
-#[derive(Clone)]
-pub struct Config {
-    pub wled: Option<String>,
-    pub port: u16,
-    pub timeout_s: u8,
-    pub fps: f64,
-    pub sample_height: u32,
-    pub band_frac: f64,
-    pub layout: Layout,
-    pub saturation: f32,
-    pub gamma: f32,
-    pub smooth: f32,
-    pub once: bool,
-    pub dump: Option<String>,
-    pub preview: bool,
-}
+pub use crate::config::Config;
 
 /// Ambient LED sync for gamescope sessions.
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
+    /// Config file (default: $XDG_CONFIG_HOME/gamescope-led-sync/config.toml,
+    /// then /etc/gamescope-led-sync/config.toml, then built-in defaults)
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
+
     /// WLED hostname or IP; omit for a dry run
     #[arg(long, value_name = "HOST")]
     wled: Option<String>,
@@ -109,51 +104,85 @@ fn bail(message: impl std::fmt::Display) -> ! {
 }
 
 pub fn parse() -> Config {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(e) => e.exit(),
+    };
+    let on_cli = |name: &str| matches.value_source(name) == Some(ValueSource::CommandLine);
 
-    if !cli.fps.is_finite() || cli.fps <= 0.0 {
-        bail("--fps must be a positive, finite number");
+    let discovered = config::discover(cli.config.as_deref()).unwrap_or_else(|e| bail(e));
+    match &discovered.path {
+        Some(path) => tracing::info!("config: {} ({})", path.display(), discovered.source),
+        None => tracing::info!("config: {}", discovered.source),
     }
-    if cli.sample_height == 0 || cli.sample_height > 16384 {
-        bail("--sample-height must be between 1 and 16384");
+    let mut cfg = discovered.config;
+    tracing::info!("on_no_session: {}", cfg.on_no_session.name());
+
+    // CLI flag > config file > built-in default: a flag set on the
+    // command line overrides the file, which overrides the defaults.
+    if on_cli("wled") {
+        cfg.wled = cli.wled;
     }
-    if !cli.smooth.is_finite() || cli.smooth <= 0.0 {
-        bail("--smooth must be a positive number (1 disables smoothing)");
+    if on_cli("port") {
+        cfg.port = cli.port;
     }
-    if !cli.gamma.is_finite() || cli.gamma <= 0.0 {
-        bail("--gamma must be a positive number");
+    if on_cli("timeout_s") {
+        cfg.timeout_s = cli.timeout_s;
     }
-    if !cli.saturation.is_finite() || cli.saturation < 0.0 {
-        bail("--saturation must be zero or a positive number");
+    if on_cli("fps") {
+        cfg.fps = cli.fps;
+    }
+    if on_cli("sample_height") {
+        cfg.sample_height = cli.sample_height;
+    }
+    if on_cli("band_frac") {
+        cfg.band_frac = cli.band_frac;
+    }
+    if on_cli("saturation") {
+        cfg.saturation = cli.saturation;
+    }
+    if on_cli("gamma") {
+        cfg.gamma = cli.gamma;
+    }
+    if on_cli("smooth") {
+        cfg.smooth = cli.smooth;
     }
 
-    // clap has already restricted --start to the eight valid codes.
-    let start = StartPoint::parse(&cli.start).expect("clap validated --start");
-    let direction = Direction::parse(if cli.counterclockwise {
-        "counterclockwise"
+    let mut top = cfg.layout.top();
+    let mut right = cfg.layout.right();
+    let mut bottom = cfg.layout.bottom();
+    let mut left = cfg.layout.left();
+    if on_cli("top") {
+        top = cli.top;
+    }
+    if on_cli("right") {
+        right = cli.right;
+    }
+    if on_cli("bottom") {
+        bottom = cli.bottom;
+    }
+    if on_cli("left") {
+        left = cli.left;
+    }
+    let start = if on_cli("start") {
+        StartPoint::parse(&cli.start).expect("clap validated --start")
     } else {
-        "clockwise"
-    })
-    .expect("known direction code");
-    // No --offset flag yet; the CLI surface lands with the config ticket.
-    let layout = Layout::new(
-        cli.top, cli.right, cli.bottom, cli.left, start, direction, 0,
-    )
-    .unwrap_or_else(|e| bail(e));
+        cfg.layout.start()
+    };
+    let direction = if on_cli("counterclockwise") {
+        Direction::Counterclockwise
+    } else {
+        cfg.layout.direction()
+    };
+    let offset = cfg.layout.offset();
+    cfg.layout =
+        Layout::new(top, right, bottom, left, start, direction, offset).unwrap_or_else(|e| bail(e));
 
-    Config {
-        wled: cli.wled,
-        port: cli.port,
-        timeout_s: cli.timeout_s,
-        fps: cli.fps,
-        sample_height: cli.sample_height,
-        band_frac: cli.band_frac,
-        layout,
-        saturation: cli.saturation,
-        gamma: cli.gamma,
-        smooth: cli.smooth,
-        once: cli.once,
-        dump: cli.dump,
-        preview: cli.preview,
-    }
+    cfg.once = cli.once;
+    cfg.dump = cli.dump;
+    cfg.preview = cli.preview;
+
+    cfg.validate().unwrap_or_else(|e| bail(e));
+    cfg
 }

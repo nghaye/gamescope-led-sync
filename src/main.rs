@@ -12,6 +12,7 @@
 
 mod capture;
 mod cli;
+mod config;
 mod geometry;
 mod output;
 
