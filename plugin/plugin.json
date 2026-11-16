@@ -1,0 +1,10 @@
+{
+  "name": "Gamescope LED Sync",
+  "author": "nghaye",
+  "version": "0.1.0",
+  "flags": [],
+  "publish": {
+    "tags": ["led", "wled", "gamescope", "ambient", "backlight"],
+    "description": "Ambient LED backlight for gamescope sessions, streamed to a WLED controller over the LAN. Configure the strip and the image processing live; the daemon applies every change at the next tick."
+  }
+}
