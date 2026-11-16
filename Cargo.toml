@@ -8,7 +8,9 @@ license = "Apache-2.0"
 clap               = { version = "4", default-features = false, features = ["derive", "error-context", "help", "std", "suggestions", "usage"] }
 libc               = "0.2"
 pipewire           = "0.10"
+serde              = { version = "1", features = ["derive"] }
 thiserror          = "2"
+toml               = "1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "fmt"] }
 
