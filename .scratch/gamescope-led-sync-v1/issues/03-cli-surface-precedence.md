@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done (commit e6c922a on vibe/ticket-03-cli-717efe)
 
 - [ ] All §4.4 flags exist with correct value parsers; `--counterclockwise` removed in favor of `--direction`
 - [ ] Merge precedence CLI > file > default, covered by a precedence unit test
