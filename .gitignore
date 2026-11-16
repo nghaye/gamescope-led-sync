@@ -3,7 +3,10 @@
 # A file git already tracks stays tracked even when a pattern here matches it.
 
 # A folder where we dump all sorts of random things that we don't want committed.
-.scratch/
+# The SPEC v1 ticket breakdown is the exception: tracked so that other
+# agent sessions can read the tickets.
+.scratch/*
+!.scratch/gamescope-led-sync-v1/
 
 # Editors
 .vscode/
