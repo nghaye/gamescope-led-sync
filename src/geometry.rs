@@ -56,6 +56,8 @@ pub enum Direction {
 }
 
 impl Direction {
+    pub const CODES: [&'static str; 2] = ["clockwise", "counterclockwise"];
+
     pub fn parse(s: &str) -> Option<Direction> {
         match s {
             "clockwise" => Some(Direction::Clockwise),
@@ -490,6 +492,9 @@ mod tests {
         assert_eq!(Direction::parse("cw"), None);
         assert_eq!(Direction::Clockwise.name(), "clockwise");
         assert_eq!(Direction::Counterclockwise.name(), "counterclockwise");
+        for code in Direction::CODES {
+            assert!(Direction::parse(code).is_some(), "{code} must parse");
+        }
     }
 
     // ---- Layout ---------------------------------------------------------

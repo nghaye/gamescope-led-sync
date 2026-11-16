@@ -43,18 +43,21 @@ fn main() -> ExitCode {
     // The WLED sender and the last colors sent live here, across
     // sessions, so a reconnect keeps the LEDs lit instead of dropping
     // them for the reconnect gap (see wait_and_keepalive).
-    let sender = match &cfg.wled {
-        Some(host) => match output::WledSender::new(host, cfg.port, cfg.timeout_s) {
+    let sender = if cfg.sends() {
+        let host = cfg.wled.as_deref().expect("sends() implies a host");
+        match output::WledSender::new(host, cfg.port, cfg.timeout_s) {
             Ok(s) => Some(Rc::new(RefCell::new(s))),
             Err(e) => {
                 tracing::error!("{e}");
                 return ExitCode::FAILURE;
             },
-        },
-        None => {
-            tracing::info!("no --wled given: dry run, nothing is sent");
-            None
-        },
+        }
+    } else if cfg.dry_run {
+        tracing::info!("--dry-run: packets are computed and logged, never sent");
+        None
+    } else {
+        tracing::info!("no --wled given: dry run, nothing is sent");
+        None
     };
     let last_colors: Rc<RefCell<Option<Vec<[u8; 3]>>>> = Rc::new(RefCell::new(None));
 
