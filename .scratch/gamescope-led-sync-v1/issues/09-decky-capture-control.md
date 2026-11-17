@@ -27,7 +27,7 @@ file-only wording of D5/D9 for `on_no_session`):
    gamescope-led-sync` only when a toggle is needed. Frontend: «Stop capture» /
    «Start capture» buttons next to the capture status.
 
-**Status:** implemented, uncommitted (no commit requested this session)
+**Status:** done (commit ebaf6d9 on main)
 
 - [x] Daemon: SIGUSR1 pause/resume, `Reason::Paused`, clean stream teardown on pause, transition logs; `cargo test` 100+7 green, clippy `-D warnings` clean
 - [x] Backend: `capture_status()` + `capture_set_paused(bool)` in `plugin/main.py` (scratch-tested against simulated journal output)
