@@ -1,18 +1,30 @@
-import { callBackend, definePlugin } from "@decky/api";
+import { callable, definePlugin } from "@decky/api";
+import manifest from "@decky/manifest";
 import {
   ButtonItem,
-  DropdownField,
+  type DropdownOption,
   DropdownItem,
   Field,
   ModalRoot,
   PanelSection,
   PanelSectionRow,
   SliderField,
+  staticClasses,
   TextField,
   ToggleField,
   showModal,
-} from "decky-frontend-lib";
+} from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
+import { FaLightbulb } from "react-icons/fa";
+
+// Decky Loader 3.x removed callBackend: with api_version 1, backend methods
+// are called with positional args via the loader/call_plugin_method route.
+const callBackend = <T,>(method: string, ...args: unknown[]): Promise<T> =>
+  (callable(method) as (...a: unknown[]) => Promise<T>)(...args);
+
+// The loader serves plugin files under the plugin.json display name
+// (URL-encoded), not under the install folder name.
+const PLUGIN_BASE = `/plugins/${encodeURIComponent(manifest.name)}`;
 
 // The config file schema (SPEC §4.2); CLI-only flags never appear here.
 interface Cfg {
@@ -55,7 +67,7 @@ const DEFAULTS: Cfg = {
   capture: { node_name: "gamescope" },
 };
 
-const START_OPTIONS: DropdownItem[] = [
+const START_OPTIONS: DropdownOption[] = [
   { label: "Bottom-left corner (bl)", data: "bl" },
   { label: "Bottom-center (bc)", data: "bc" },
   { label: "Bottom-right corner (br)", data: "br" },
@@ -66,7 +78,7 @@ const START_OPTIONS: DropdownItem[] = [
   { label: "Left-center (lc)", data: "lc" },
 ];
 
-const DIRECTION_OPTIONS: DropdownItem[] = [
+const DIRECTION_OPTIONS: DropdownOption[] = [
   { label: "Clockwise (viewed from the front)", data: "clockwise" },
   { label: "Counterclockwise (viewed from the front)", data: "counterclockwise" },
 ];
@@ -84,7 +96,7 @@ function packetLen(l: Cfg["layout"]): number {
   return l.top + l.right + l.bottom + l.left + Math.max(l.offset, 0);
 }
 
-export default definePlugin(() => {
+function Content() {
   const [cfg, setCfg] = useState<Cfg>(DEFAULTS);
   const [status, setStatus] = useState("");
   const [service, setService] = useState<ServiceStatus | null>(null);
@@ -110,7 +122,7 @@ export default definePlugin(() => {
     setStatus("saving…");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      const res = await callBackend<{ ok: boolean; errors?: string[] }>("save_config", { cfg: next });
+      const res = await callBackend<{ ok: boolean; errors?: string[] }>("save_config", next);
       setStatus(res.ok ? "Saved ✓" : (res.errors ?? ["invalid config"]).join("\n"));
     }, 400);
   };
@@ -145,7 +157,7 @@ export default definePlugin(() => {
   }, [L]);
 
   const showLogs = async () => {
-    const res = await callBackend<{ ok: boolean; logs: string }>("get_logs", { n: 200 });
+    const res = await callBackend<{ ok: boolean; logs: string }>("get_logs", 200);
     showModal(
       <ModalRoot>
         <pre style={{ maxHeight: "60vh", overflow: "auto", whiteSpace: "pre-wrap" }}>
@@ -156,7 +168,7 @@ export default definePlugin(() => {
   };
 
   const testFrame = async () => {
-    const res = await callBackend<{ ok: boolean; error?: string; log?: string }>("test_frame", {});
+    const res = await callBackend<{ ok: boolean; error?: string; log?: string }>("test_frame");
     if (!res.ok) {
       showModal(
         <ModalRoot>
@@ -169,7 +181,7 @@ export default definePlugin(() => {
     showModal(
       <ModalRoot>
         <img
-          src={`/plugins/gamescope-led-sync/data/last-frame.png?ts=${Date.now()}`}
+          src={`${PLUGIN_BASE}/data/last-frame.png?ts=${Date.now()}`}
           alt="last captured frame"
           style={{ maxWidth: "100%" }}
         />
@@ -189,7 +201,7 @@ export default definePlugin(() => {
             label="Enabled at boot"
             checked={service?.enabled ?? false}
             onChange={async (checked: boolean) => {
-              await callBackend("service_set_enabled", { enabled: checked });
+              await callBackend("service_set_enabled", checked);
               refreshService();
             }}
           />
@@ -200,17 +212,17 @@ export default definePlugin(() => {
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => callBackend("service_start", {}).then(refreshService)}>
+          <ButtonItem layout="below" onClick={() => callBackend("service_start").then(refreshService)}>
             Start
           </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => callBackend("service_stop", {}).then(refreshService)}>
+          <ButtonItem layout="below" onClick={() => callBackend("service_stop").then(refreshService)}>
             Stop
           </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => callBackend("service_restart", {}).then(refreshService)}>
+          <ButtonItem layout="below" onClick={() => callBackend("service_restart").then(refreshService)}>
             Restart
           </ButtonItem>
         </PanelSectionRow>
@@ -265,7 +277,7 @@ export default definePlugin(() => {
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
-          <DropdownField
+          <DropdownItem
             label="Start point"
             rgOptions={START_OPTIONS}
             selectedOption={START_OPTIONS.find((o) => o.data === layout.start) ?? START_OPTIONS[0]}
@@ -273,7 +285,7 @@ export default definePlugin(() => {
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <DropdownField
+          <DropdownItem
             label="Direction"
             rgOptions={DIRECTION_OPTIONS}
             selectedOption={DIRECTION_OPTIONS.find((o) => o.data === layout.direction) ?? DIRECTION_OPTIONS[0]}
@@ -294,9 +306,8 @@ export default definePlugin(() => {
           <Field
             label="WLED segment length"
             description={`Set your WLED segment length to L = ${L} (SPEC §11)`}
-            style={lFlash ? { color: "#ffd75f" } : undefined}
           >
-            L = {L}
+            <span style={lFlash ? { color: "#ffd75f" } : undefined}>L = {L}</span>
           </Field>
         </PanelSectionRow>
       </PanelSection>
@@ -373,4 +384,11 @@ export default definePlugin(() => {
       </PanelSection>
     </>
   );
-});
+}
+
+export default definePlugin(() => ({
+  name: "Gamescope LED Sync",
+  titleView: <div className={staticClasses.Title}>Gamescope LED Sync</div>,
+  content: <Content />,
+  icon: <FaLightbulb />,
+}));

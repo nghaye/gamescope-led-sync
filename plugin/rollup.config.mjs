@@ -1,36 +1,5 @@
-import commonjs from "@rollup/plugin-commonjs";
-import json from "@rollup/plugin-json";
-import { nodeResolve } from "@rollup/plugin-node-resolve";
-import replace from "@rollup/plugin-replace";
-import typescript from "@rollup/plugin-typescript";
-import { defineConfig } from "rollup";
-import importAssets from "rollup-plugin-import-assets";
+import deckyPlugin from "@decky/rollup";
 
-import { name } from "./package.json";
-
-export default defineConfig({
-  input: "./src/index.tsx",
-  plugins: [
-    commonjs(),
-    nodeResolve({ browser: true }),
-    typescript(),
-    json(),
-    replace({
-      preventAssignment: false,
-      values: {
-        __DECKY_PLUGIN_NAME__: JSON.stringify(name),
-      },
-    }),
-    importAssets({
-      publicPath: `http://127.0.0.1:1337/plugins/${name}/`,
-    }),
-  ],
-  context: "window",
-  external: ["@decky/api"],
-  output: {
-    file: "dist/index.js",
-    format: "iife",
-    sourcemap: true,
-    exports: "default",
-  },
+export default deckyPlugin({
+  // Add your extra Rollup options here
 });

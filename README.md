@@ -91,7 +91,7 @@ The perimeter is a cyclic list of `count = top+right+bottom+left` zones. The str
 
 ## Decky plugin
 
-`plugin/` is a [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin (no root flag; runs as the session user): service controls (enable at boot, start/stop/restart, logs, test one frame), WLED host/port, strip layout and offset slider, and the image sliders — every change saves (debounced 400 ms) and goes live at the daemon's next tick. `wled.timeout_s` and `behavior.on_no_session` stay file-only. See [plugin/README.md](./plugin/README.md).
+`plugin/` is a [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin (no root flag; runs as the session user): service controls (enable at boot, start/stop/restart, logs, test one frame), WLED host/port, strip layout and offset slider, and the image sliders — every change saves (debounced 400 ms) and goes live at the daemon's next tick. `wled.timeout_s` and `behavior.on_no_session` stay file-only. `deploy/install.sh` does **not** install the plugin — run `./plugin/install.sh` once as the normal user (no sudo: it installs through Decky Loader's local API; `--direct` falls back to a sudo copy + loader restart). See [plugin/README.md](./plugin/README.md).
 
 ## Protocol notes
 

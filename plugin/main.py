@@ -16,10 +16,12 @@ CONFIG = Path.home() / ".config" / "gamescope-led-sync" / "config.toml"
 BINARY = "/usr/bin/gamescope-led-sync"
 UNIT = "gamescope-led-sync"
 
-# Plugin data dir, from the loader's DECKY_* env vars; the PNG written by
-# test_frame is served at /plugins/gamescope-led-sync/data/last-frame.png.
+# Plugin data dir, from the loader's DECKY_* env vars. The loader serves
+# /plugins/<plugin name>/data/... from DECKY_PLUGIN_RUNTIME_DIR
+# (~/homebrew/data/<plugin dir>), so the PNG written by test_frame lands there.
 DATA_DIR = Path(
-    os.environ.get("DECKY_PLUGIN_DATA_DIR")
+    os.environ.get("DECKY_PLUGIN_RUNTIME_DIR")
+    or os.environ.get("DECKY_PLUGIN_DATA_DIR")
     or (Path(os.environ["DECKY_PLUGIN_DIR"]) / "data" if os.environ.get("DECKY_PLUGIN_DIR") else Path.home() / ".decky-data")
 )
 

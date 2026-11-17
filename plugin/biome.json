@@ -14,5 +14,5 @@
     "indentStyle": "space",
     "indentWidth": 2
   },
-  "files": { "includes": ["src/**/*.{ts,tsx}"] }
+  "files": { "include": ["src/**/*.{ts,tsx}"] }
 }

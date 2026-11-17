@@ -48,7 +48,7 @@ gamescope-led-sync/
     gamescope-led-sync.service     # systemd user unit
     config.toml.example            # fully commented config
     install.sh                     # idempotent install/uninstall
-  plugin/          # Decky plugin (official template: rollup + decky-frontend-lib + @decky/api)
+  plugin/          # Decky plugin (official template: @decky/rollup + @decky/ui + @decky/api, install.sh)
     plugin.json  package.json  rollup.config.mjs  main.py  src/index.tsx  README.md
   SPEC.md          # this file
   README.md        # rewritten for the SteamOS deliverable
@@ -312,9 +312,15 @@ install.sh --uninstall
 
 ## 10. Decky plugin (`plugin/`)
 
-Based on the official decky plugin template (rollup, `decky-frontend-lib`,
-`@decky/api` for `callBackend`). `plugin.json`: name «Gamescope LED Sync», no
-`root` flag (D6), version 0.1.0. UI language: English (D7).
+Based on the current official decky plugin template (`@decky/rollup` +
+`@decky/ui`, `@decky/api` for `callable`/`definePlugin`; Decky Loader 3.x loads
+`dist/index.js` as an ES module because `package.json` has `"type": "module"`,
+and `callBackend` no longer exists at runtime). `plugin.json`: name
+«Gamescope LED Sync», no `root` flag (D6), `api_version: 1` (instance methods,
+positional backend args), version 0.1.0. Install with `plugin/install.sh`
+(builds the frontend, then installs through the loader's local API — no sudo;
+`--direct` copies to `~/homebrew/plugins/gamescope-led-sync` with sudo and
+restarts `plugin_loader`). UI language: English (D7).
 
 ### 10.1 Backend (`main.py`, `class Plugin`)
 
@@ -330,7 +336,7 @@ Runs as the session user. Constants: `CONFIG =
 | `service_set_enabled(bool)` | `systemctl --user enable` / `disable`. |
 | `service_start/stop/restart()` | `systemctl --user …`. |
 | `get_logs(n=200)` | `journalctl --user -u gamescope-led-sync -n N --no-pager`. |
-| `test_frame()` | Refuses when the service is active (two capture clients on one gamescope node are unsupported, §6.0): `{ok:false, error:"stop the service first"}`. Otherwise runs `[BINARY, "--config", CONFIG, "--once", "--dump", <plugin data dir>/last-frame.png]` (timeout 30 s; clear error if the binary is missing) and returns `{ok, log}`. PNG served at `/plugins/<name>/data/last-frame.png` (plugin data dir from the loader's `DECKY_*` env vars). |
+| `test_frame()` | Refuses when the service is active (two capture clients on one gamescope node are unsupported, §6.0): `{ok:false, error:"stop the service first"}`. Otherwise runs `[BINARY, "--config", CONFIG, "--once", "--dump", <plugin data dir>/last-frame.png]` (timeout 30 s; clear error if the binary is missing) and returns `{ok, log}`. PNG written to `DECKY_PLUGIN_RUNTIME_DIR` and served at `/plugins/<plugin.json name, URL-encoded>/data/last-frame.png` — the loader keys served URLs by display name, not by install folder. |
 
 ### 10.2 Frontend (`src/index.tsx`) — control mapping
 
@@ -440,7 +446,7 @@ are now locked where indicated:
 10. No config schema-version key in v1; unknown keys are hard errors (§4.2).
 11. `[capture] node_name = "gamescope"` added as an advanced, file-only escape
     hatch in case a setup names its PipeWire node differently (§4.2).
-12. Numeric fields in Decky = `TextField` with numeric validation (decky-frontend-lib
+12. Numeric fields in Decky = `TextField` with numeric validation (@decky/ui
     has no dedicated number field) — already in §10.2, restated here.
 13. New files must pass the existing lint/format recipes (§12).
 14. Below the four per-edge LED count fields, the plugin shows a read-only,
