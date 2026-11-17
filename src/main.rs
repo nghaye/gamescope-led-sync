@@ -64,7 +64,27 @@ fn main() -> ExitCode {
         }
     }
 
+    // While paused (SIGUSR1, the plugin's Stop capture button), stay in
+    // the reconnect wait: on_no_session applies and live reload keeps
+    // working, but no capture session runs. The transition is logged
+    // once so the plugin can parse it from the journal (§10.1).
+    let mut announced_pause = false;
     loop {
+        if capture::paused() {
+            if !announced_pause {
+                tracing::info!("capture paused (SIGUSR1); on_no_session behavior applies");
+                announced_pause = true;
+            }
+            wait_and_keepalive(&cfg, &sender, &last_colors, &reloader, &last_sender_try);
+            if capture::interrupted() {
+                return ExitCode::SUCCESS;
+            }
+            continue;
+        }
+        if announced_pause {
+            tracing::info!("capture resumed (SIGUSR1)");
+            announced_pause = false;
+        }
         match capture::run(&cfg, &sender, &last_colors, &reloader, &last_sender_try) {
             Ok(capture::Reason::OnceDone) => return ExitCode::SUCCESS,
             Ok(capture::Reason::Interrupted) => {
@@ -82,6 +102,7 @@ fn main() -> ExitCode {
                 }
                 tracing::warn!("session ended ({msg}); reconnecting in 2 s");
             },
+            Ok(capture::Reason::Paused) => continue,
             Err(msg) => {
                 if cfg.borrow().once {
                     tracing::warn!("{msg}");

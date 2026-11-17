@@ -63,11 +63,22 @@ const TICK_QUANTUM: Duration = Duration::from_millis(4);
 // only touch an atomic safely anyway.
 static QUIT: AtomicBool = AtomicBool::new(false);
 
+// SIGUSR1 toggles manual capture pause (the Decky plugin's Stop/Start
+// capture buttons): while set, the main loop stays in the reconnect
+// wait, so the on_no_session behavior applies, and the capture stream
+// is torn down cleanly and re-established on resume.
+static PAUSED: AtomicBool = AtomicBool::new(false);
+
 extern "C" fn on_signal(_sig: libc::c_int) {
     QUIT.store(true, Ordering::SeqCst);
 }
 
-/// Make Ctrl+C and SIGTERM flip a flag instead of killing us outright.
+extern "C" fn on_sigusr1(_sig: libc::c_int) {
+    PAUSED.fetch_xor(true, Ordering::SeqCst);
+}
+
+/// Make Ctrl+C and SIGTERM flip a flag instead of killing us outright,
+/// and SIGUSR1 toggle the manual capture pause.
 ///
 /// The loops poll it and quit the PipeWire main loop on the loop
 /// thread, so the stream disconnects through its destructor exactly as
@@ -79,6 +90,7 @@ pub fn install_signal_handler() {
     unsafe {
         libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
         libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGUSR1, on_sigusr1 as *const () as libc::sighandler_t);
     }
 }
 
@@ -86,11 +98,16 @@ pub fn interrupted() -> bool {
     QUIT.load(Ordering::SeqCst)
 }
 
+pub fn paused() -> bool {
+    PAUSED.load(Ordering::SeqCst)
+}
+
 pub enum Reason {
     OnceDone,
     OnceFailed(String),
     Stopped(String),
     Interrupted,
+    Paused,
 }
 
 /// A setup failure that ends a capture session before it produces frames.
@@ -265,7 +282,8 @@ fn discover(
         let found = found.clone();
         let announced = announced.clone();
         move |_expirations| {
-            if QUIT.load(Ordering::SeqCst) || found.get().is_some() {
+            if QUIT.load(Ordering::SeqCst) || PAUSED.load(Ordering::SeqCst) || found.get().is_some()
+            {
                 ml.quit();
                 return;
             }
@@ -341,6 +359,9 @@ pub fn run(
     let Some(node_id) = discover(&mainloop, &core, once, &node_name)? else {
         if interrupted() {
             return Ok(Reason::Interrupted);
+        }
+        if paused() {
+            return Ok(Reason::Paused);
         }
         return Ok(Reason::OnceFailed(
             "no gamescope node after 15 s; is gamescope running?".into(),
@@ -466,6 +487,14 @@ pub fn run(
         move |_expirations| {
             if QUIT.load(Ordering::SeqCst) {
                 state.borrow_mut().end = Some(Reason::Interrupted);
+                ml.quit();
+                return;
+            }
+            // Manual pause: end the session cleanly (the stream drops
+            // with `stream` when run() returns) and let the main loop's
+            // wait apply on_no_session until resumed.
+            if PAUSED.load(Ordering::SeqCst) {
+                state.borrow_mut().end = Some(Reason::Paused);
                 ml.quit();
                 return;
             }

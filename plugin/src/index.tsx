@@ -83,6 +83,20 @@ const DIRECTION_OPTIONS: DropdownOption[] = [
   { label: "Counterclockwise (viewed from the front)", data: "counterclockwise" },
 ];
 
+const ON_NO_SESSION_OPTIONS: DropdownOption[] = [
+  { label: "WLED preset after timeout (preset)", data: "preset" },
+  { label: "Keep last colors (keep-last)", data: "keep-last" },
+  { label: "Black (black)", data: "black" },
+];
+
+interface CaptureStatus {
+  ok: boolean;
+  active: boolean;
+  state: "capturing" | "waiting" | "paused" | "inactive" | string;
+  fps: number | null;
+  detail: string;
+}
+
 interface ServiceStatus {
   ok: boolean;
   ActiveState: string;
@@ -100,6 +114,7 @@ function Content() {
   const [cfg, setCfg] = useState<Cfg>(DEFAULTS);
   const [status, setStatus] = useState("");
   const [service, setService] = useState<ServiceStatus | null>(null);
+  const [capture, setCapture] = useState<CaptureStatus | null>(null);
   const [lFlash, setLFlash] = useState(false);
   const prevL = useRef<number | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -109,10 +124,27 @@ function Content() {
       if (res.ok && res.config) setCfg({ ...DEFAULTS, ...res.config });
     });
     refreshService();
+    refreshCapture();
+    // Poll the capture status so the UI tracks session start/end on its own.
+    const t = setInterval(refreshCapture, 5000);
+    return () => clearInterval(t);
   }, []);
 
   const refreshService = () => {
     callBackend<ServiceStatus>("service_status").then(setService);
+  };
+
+  const refreshCapture = () => {
+    callBackend<CaptureStatus>("capture_status").then(setCapture);
+  };
+
+  // Stop/Start capture toggles the daemon's SIGUSR1 pause; while paused
+  // the configured on_no_session behavior drives the strip.
+  const setCapturePaused = async (paused: boolean) => {
+    const res = await callBackend<{ ok: boolean; error?: string }>("capture_set_paused", paused);
+    if (!res.ok) setStatus(res.error ?? "capture toggle failed");
+    refreshCapture();
+    refreshService();
   };
 
   // Every control saves on change, debounced 400 ms; no Apply button —
@@ -210,6 +242,40 @@ function Content() {
           <Field label="Status" description={service ? `${service.ActiveState} (${service.SubState})` : "…"}>
             {service ? `${service.ActiveState} / ${service.SubState}` : "unknown"}
           </Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <Field
+            label="Capture"
+            description={capture?.detail || "…"}
+          >
+            {capture
+              ? capture.state === "capturing"
+                ? `capturing${capture.fps != null ? ` (${capture.fps.toFixed(1)} fps)` : ""}`
+                : capture.state === "paused"
+                  ? "paused"
+                  : capture.state === "waiting"
+                    ? "waiting for gamescope"
+                    : "inactive (service not running)"
+              : "unknown"}
+          </Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={capture?.state === "paused" || capture?.active === false}
+            onClick={() => setCapturePaused(true)}
+          >
+            Stop capture
+          </ButtonItem>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={capture?.state !== "paused"}
+            onClick={() => setCapturePaused(false)}
+          >
+            Start capture
+          </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={() => callBackend("service_start").then(refreshService)}>
@@ -371,6 +437,19 @@ function Content() {
             label="Advanced: sample height (120–480)"
             value={String(proc.sample_height)}
             onChange={(e) => patchNum("processing", "sample_height", e.target.value)}
+          />
+        </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title="Behavior">
+        <PanelSectionRow>
+          <DropdownItem
+            label="When no gamescope session is active"
+            rgOptions={ON_NO_SESSION_OPTIONS}
+            selectedOption={
+              ON_NO_SESSION_OPTIONS.find((o) => o.data === cfg.behavior.on_no_session) ?? ON_NO_SESSION_OPTIONS[0]
+            }
+            onChange={(item) => patch("behavior", "on_no_session", item.data as string)}
           />
         </PanelSectionRow>
       </PanelSection>

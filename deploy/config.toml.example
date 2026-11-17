@@ -54,10 +54,11 @@ smooth = 0.5
 brightness = 1.0
 
 [behavior]
-# What to send while no gamescope session is connected:
+# What to send while no gamescope session is connected (or while the capture
+# is paused from the Decky UI):
 # preset (send nothing; WLED falls back to its own preset after timeout_s),
 # keep-last (resend the last colors every 1 s), or black (send black).
-# File-only (not in the Decky UI).
+# Also selectable in the Decky UI (Behavior dropdown).
 on_no_session = "preset"
 
 [capture]

@@ -36,8 +36,9 @@ scope for v1 (§15).
 Defaults chosen by default (flagged, correctable in the file): config example uses
 the 65" strip `top=86 right=48 bottom=86 left=48` (268 LEDs), `start="bc"`
 (owner's strip starts bottom-center), `direction="clockwise"`, `offset=0`.
-`wled.timeout_s` (default 2) and `behavior.on_no_session` (default `"preset"`)
-stay **file-only** — not exposed in the Decky UI (not selected in D9).
+`wled.timeout_s` (default 2) stays **file-only** — not exposed in the Decky
+UI (not selected in D9). `behavior.on_no_session` (default `"preset"`) is
+exposed in the Decky UI (Behavior dropdown, ticket 09).
 
 ## 3. Repository layout (v1)
 
@@ -98,7 +99,7 @@ smooth = 0.5            # >0; 1.0 disables smoothing (UI: 0.05..1.0)
 brightness = 1.0        # 0.0..1.0 (UI: 0..100 %)
 
 [behavior]
-on_no_session = "preset" # keep-last | black | preset  (D5)
+on_no_session = "preset" # keep-last | black | preset  (D5; Decky UI: Behavior dropdown)
 
 [capture]
 node_name = "gamescope"  # media.name of the gamescope PipeWire node; advanced, file-only
@@ -227,7 +228,7 @@ when `count` changes (existing length check).
    resend `last_colors` (keeps WLED in realtime on static screens) — unchanged.
 5. Stats log every 5 s (unchanged).
 
-Reconnect loop, signal handling, discovery (`media.name == "gamescope"`),
+Reconnect loop, discovery (`media.name == "gamescope"`),
 `requested_size` negotiation: **unchanged**.
 
 ### 6.1 No-session behavior (D5)
@@ -238,6 +239,17 @@ While disconnected (no gamescope node / stream stopped / reconnect wait):
 falls back to its preset after `timeout_s`. If no frame was ever captured, all
 three send nothing until the first frame. On clean shutdown (SIGTERM) the
 daemon sends nothing; WLED's timeout applies.
+
+### 6.2 Manual capture pause (SIGUSR1, ticket 09)
+
+SIGUSR1 toggles a manual pause (the Decky plugin's Stop/Start capture
+buttons). While paused, the daemon ends any running capture session
+cleanly (the stream disconnects through its destructor, exactly like a
+normal session end) and stays in the reconnect wait, so §6.1 applies and
+live reload keeps working; no capture runs. On resume it rediscovers the
+node and reconnects. Each transition is logged once («capture paused
+(SIGUSR1)… » / «capture resumed (SIGUSR1)») so the plugin can parse the
+state from the journal (§10.1 `capture_status`).
 
 ## 7. Live reload (immediate changes, no restart)
 
@@ -335,13 +347,19 @@ Runs as the session user. Constants: `CONFIG =
 | `service_status()` | `systemctl --user show gamescope-led-sync -p ActiveState,SubState,UnitFileState` (+ `is-enabled`). |
 | `service_set_enabled(bool)` | `systemctl --user enable` / `disable`. |
 | `service_start/stop/restart()` | `systemctl --user …`. |
+| `capture_status()` | Service ActiveState plus the capture phase parsed from the last 200 journal lines: `capturing` (last «found gamescope node»), `waiting` («session ended»/«retrying»/«waiting for the gamescope node»/«capture resumed»), `paused` («capture paused»), `inactive` (service not active); also the live fps from the last stats line. Returns `{ok, active, state, fps, detail}`. |
+| `capture_set_paused(bool)` | Manual capture pause via `systemctl --user kill --signal=SIGUSR1 gamescope-led-sync` (§6.2). Refuses when the service is not active; only signals when the parsed state differs from the request. Returns `{ok, error?}`. |
 | `get_logs(n=200)` | `journalctl --user -u gamescope-led-sync -n N --no-pager`. |
 | `test_frame()` | Refuses when the service is active (two capture clients on one gamescope node are unsupported, §6.0): `{ok:false, error:"stop the service first"}`. Otherwise runs `[BINARY, "--config", CONFIG, "--once", "--dump", <plugin data dir>/last-frame.png]` (timeout 30 s; clear error if the binary is missing) and returns `{ok, log}`. PNG written to `DECKY_PLUGIN_RUNTIME_DIR` and served at `/plugins/<plugin.json name, URL-encoded>/data/last-frame.png` — the loader keys served URLs by display name, not by install folder. |
 
 ### 10.2 Frontend (`src/index.tsx`) — control mapping
 
 - **Service** section: `ToggleField` «Enabled at boot» ↔ `service_set_enabled`;
-  status line (`ActiveState`/`SubState`); `ButtonItem`s Start / Stop / Restart /
+  status line (`ActiveState`/`SubState`); a read-only **Capture** line
+  (`capture_status`: capturing + live fps / waiting for gamescope / paused /
+  inactive; refreshed on mount, after every action, and every 5 s);
+  `ButtonItem`s Start / Stop / Restart / **Stop capture** / **Start capture**
+  (`capture_set_paused`, §6.2 — disabled when not applicable) /
   View logs (modal with `get_logs`) / Test frame (D10: modal with
   `<img src="/plugins/gamescope-led-sync/data/last-frame.png?ts=…">`).
 - **WLED**: `TextField` host; numeric `TextField` port (1–65535).
@@ -359,11 +377,12 @@ Runs as the session user. Constants: `CONFIG =
   `save_config`; a status line shows «Saved ✓» or the validation errors (the
   file is not written when invalid). No separate Apply button — changes are
   live (daemon reloads at the next tick).
+- **Behavior** section: `DropdownItem` «When no gamescope session is active»
+  ↔ `behavior.on_no_session` (preset / keep-last / black, D5).
 - A hint line shows the computed packet length `L = count + max(offset, 0)`
   («set your WLED segment length to L») and is highlighted whenever L changes
   (§11).
-- `wled.timeout_s` and `behavior.on_no_session`: file-only (D9/D5), documented
-  in the plugin README.
+- `wled.timeout_s`: file-only (D9), documented in the plugin README.
 
 ## 11. WLED prerequisites (documented in README)
 

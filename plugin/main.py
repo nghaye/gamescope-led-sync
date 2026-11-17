@@ -7,6 +7,7 @@ to validate and write the file atomically (temp file + rename).
 """
 
 import os
+import re
 import subprocess
 import tempfile
 import tomllib
@@ -252,6 +253,64 @@ class Plugin:
     async def service_restart(self):
         res = _systemctl("restart", UNIT)
         return {"ok": res.returncode == 0, "error": res.stderr.strip() or None}
+
+    async def capture_status(self):
+        """Capture state: service ActiveState plus the capture phase parsed
+        from the last journal lines (the daemon logs each transition:
+        "found gamescope node" = capturing, "session ended"/"retrying"/
+        "waiting for the gamescope node" = waiting, "capture paused"/
+        "capture resumed" = paused/waiting, plus the live fps from the
+        last stats line)."""
+        status = await self.service_status()
+        active = status.get("ActiveState") == "active"
+        result = {"ok": True, "active": active, "state": "inactive", "fps": None, "detail": ""}
+        if not active:
+            result["detail"] = f"service {status.get('ActiveState', 'unknown')}"
+            return result
+        res = subprocess.run(
+            ["journalctl", "--user", "-u", UNIT, "-n", "200", "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        state = "waiting"
+        fps = None
+        detail = "no gamescope session seen yet"
+        for line in (res.stdout + res.stderr).splitlines():
+            if "capture paused" in line:
+                state, detail = "paused", "paused (SIGUSR1)"
+            elif "capture resumed" in line:
+                state, detail = "waiting", "resumed; waiting for a gamescope session"
+            elif "found gamescope node" in line:
+                state = "capturing"
+                m = re.search(r"id (\d+)", line)
+                detail = f"capturing gamescope node id {m.group(1)}" if m else "capturing"
+            elif "session ended" in line or "retrying in 2 s" in line or "waiting for the gamescope node" in line:
+                state, detail = "waiting", "waiting for a gamescope session"
+            m = re.search(r"([\d.]+) frames/s", line)
+            if m:
+                fps = float(m.group(1))
+        result.update(state=state, fps=fps, detail=detail)
+        return result
+
+    async def capture_set_paused(self, paused: bool):
+        """Toggle the daemon's manual capture pause with SIGUSR1.
+
+        Refuses while the service is not active (the daemon owns the
+        capture); only signals when the parsed current state differs
+        from the requested one.
+        """
+        status = await self.service_status()
+        if status.get("ActiveState") != "active":
+            return {"ok": False, "error": "the service is not active; start it first"}
+        current = await self.capture_status()
+        if (current.get("state") == "paused") == paused:
+            return {"ok": True, "state": current.get("state"), "already": True}
+        res = _systemctl("kill", UNIT, "--signal=SIGUSR1")
+        if res.returncode != 0:
+            return {"ok": False, "error": res.stderr.strip() or "could not signal the daemon"}
+        return {"ok": True}
 
     async def get_logs(self, n: int = 200):
         res = subprocess.run(
