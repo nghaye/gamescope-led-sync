@@ -81,15 +81,16 @@ fn main() -> ExitCode {
         }
     }
 
-    // While paused (SIGUSR1, the plugin's Stop capture button), stay in
-    // the reconnect wait: on_no_session applies and live reload keeps
-    // working, but no capture session runs. The transition is logged
-    // once so the plugin can parse it from the journal (§10.1).
+    // While paused (SIGUSR1, the plugin's Capture switch), stay in the
+    // reconnect wait: live reload keeps working, no capture session
+    // runs, and nothing is sent to the WLED so its realtime timeout
+    // releases the strip (ticket 11). The transition is logged once so
+    // the plugin can parse it from the journal (§10.1).
     let mut announced_pause = false;
     loop {
         if capture::paused() {
             if !announced_pause {
-                tracing::info!("capture paused (SIGUSR1); on_no_session behavior applies");
+                tracing::info!("capture paused (SIGUSR1); WLED released, no packets while paused");
                 announced_pause = true;
             }
             wait_and_keepalive(&cfg, &sender, &last_colors, &reloader, &last_sender_try);
@@ -140,12 +141,31 @@ fn main() -> ExitCode {
     }
 }
 
+/// The no-session packet to send this wait tick, if any (§6.1/D5).
+/// While the capture is manually paused (§6.2), nothing is sent
+/// whatever `on_no_session` says: the WLED is released so its realtime
+/// timeout can hand the strip back to its own preset (ticket 11).
+fn no_session_packet(
+    c: &Config,
+    paused: bool,
+    last_colors: &Option<Vec<[u8; 3]>>,
+) -> Option<Vec<[u8; 3]>> {
+    if paused {
+        return None;
+    }
+    match c.on_no_session {
+        OnNoSession::Preset => None,
+        OnNoSession::KeepLast => last_colors.clone(),
+        OnNoSession::Black => last_colors
+            .as_ref()
+            .map(|_| vec![[0u8; 3]; c.layout.packet_len()]),
+    }
+}
+
 /// Wait before reconnecting. While no session is connected, apply the
-/// configured no-session behavior (§6.1/D5): "preset" sends nothing and
-/// lets WLED fall back to its own preset after timeout_s, "keep-last"
-/// resends the last colors every second, "black" sends a black packet
-/// every second; the latter two send nothing until a frame was ever
-/// captured. Reload and sender retry run every second here too. On a
+/// configured no-session behavior (§6.1/D5) via [`no_session_packet`] —
+/// unless the capture is manually paused, in which case nothing is sent
+/// at all. Reload and sender retry run every second here too. On a
 /// signal the loop returns without sending anything (§6.1: clean
 /// shutdown sends nothing).
 fn wait_and_keepalive(
@@ -164,22 +184,55 @@ fn wait_and_keepalive(
         reload::reload_if_changed(cfg, sender, reloader);
         let c = cfg.borrow().clone();
         reload::ensure_sender(&c, sender, last_sender_try);
-        if let Some(s) = sender.borrow_mut().as_mut() {
-            match c.on_no_session {
-                OnNoSession::Preset => {},
-                OnNoSession::KeepLast => {
-                    if let Some(colors) = last_colors.borrow().as_ref() {
-                        s.send(colors);
-                    }
-                },
-                OnNoSession::Black => {
-                    if last_colors.borrow().is_some() {
-                        s.send(&vec![[0u8; 3]; c.layout.packet_len()]);
-                    }
-                },
-            }
+        if let Some(s) = sender.borrow_mut().as_mut()
+            && let Some(colors) = no_session_packet(&c, capture::paused(), &last_colors.borrow())
+        {
+            s.send(&colors);
         }
         sleep(step);
         waited += step;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::geometry::{Direction, Layout, StartPoint},
+    };
+
+    // Ticket 11: a manual pause releases the WLED — no packet may go out
+    // while paused, whatever on_no_session says, so WLED's realtime
+    // timeout hands the strip back.
+    #[test]
+    fn paused_releases_the_wled_regardless_of_on_no_session() {
+        let mut c = Config::defaults();
+        c.layout = Layout::new(10, 10, 10, 10, StartPoint::Bl, Direction::Clockwise, 0).unwrap();
+        let last = Some(vec![[9u8; 3]; c.layout.packet_len()]);
+        for behavior in [
+            OnNoSession::Preset,
+            OnNoSession::KeepLast,
+            OnNoSession::Black,
+        ] {
+            c.on_no_session = behavior;
+            assert!(
+                no_session_packet(&c, true, &last).is_none(),
+                "paused must send nothing with {behavior:?}"
+            );
+        }
+        // Unpaused, §6.1 still applies as before.
+        c.on_no_session = OnNoSession::KeepLast;
+        assert_eq!(no_session_packet(&c, false, &last).as_ref(), last.as_ref());
+        c.on_no_session = OnNoSession::Black;
+        let black = no_session_packet(&c, false, &last).unwrap();
+        assert_eq!(black.len(), c.layout.packet_len());
+        assert!(black.iter().all(|px| *px == [0u8; 3]));
+        c.on_no_session = OnNoSession::Preset;
+        assert!(no_session_packet(&c, false, &last).is_none());
+        // No frame ever captured: keep-last/black stay silent (§6.1).
+        c.on_no_session = OnNoSession::KeepLast;
+        assert!(no_session_packet(&c, false, &None).is_none());
+        c.on_no_session = OnNoSession::Black;
+        assert!(no_session_packet(&c, false, &None).is_none());
     }
 }

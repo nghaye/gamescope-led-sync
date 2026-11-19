@@ -87,6 +87,7 @@ interface ServiceStatus {
   SubState: string;
   UnitFileState: string;
   enabled: boolean;
+  error?: string | null;
 }
 
 interface WledStatus {
@@ -274,7 +275,13 @@ function Content() {
         <PanelSectionRow>
           <Field
             label="Service"
-            description={service ? `enabled at boot: ${service.enabled ? "yes" : "no"}` : "…"}
+            description={
+              service
+                ? service.error
+                  ? `systemctl --user error: ${service.error}`
+                  : `enabled at boot: ${service.enabled ? "yes" : "no"}`
+                : "…"
+            }
           >
             {service ? `${service.ActiveState} / ${service.SubState}` : "unknown"}
           </Field>

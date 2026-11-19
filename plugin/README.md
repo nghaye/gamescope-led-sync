@@ -11,8 +11,8 @@ capture to a WLED controller (SPEC §10). The plugin runs as the session user
   waiting for gamescope / paused / inactive), live FPS, and WLED strip
   reachability (HTTP probe of the configured host, `GET /json/info`).
 - **Capture**: the «Capture» switch pauses/resumes the capture live
-  (SIGUSR1 in the daemon — while paused, the configured no-session behavior
-  drives the strip). The «Capture at startup» switch persists
+  (SIGUSR1 in the daemon — while paused, nothing is sent and the WLED is
+  released). The «Capture at startup» switch persists
   `[capture] start_paused` in the config file: the daemon starts paused when
   it is set, and toggling the switch also applies immediately on live reload.
 - **Image**: Brightness, Gamma, Saturation, Smooth sliders.

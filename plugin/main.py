@@ -250,6 +250,34 @@ def _deep_merge(base, over):
     return out
 
 
+_SESSION_ENV = None
+
+
+def _session_env():
+    """Environment for `systemctl --user` / `journalctl --user`.
+
+    The Decky loader runs as root and forks this backend with the root
+    environment, so XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS are
+    usually missing and every `--user` call fails with "Failed to connect
+    to user scope bus" — the plugin would then report the service as
+    unknown even while it runs. Point them at the session user's runtime
+    dir when they are absent.
+    """
+    global _SESSION_ENV
+    if _SESSION_ENV is None:
+        env = dict(os.environ)
+        if not env.get("XDG_RUNTIME_DIR"):
+            rt = f"/run/user/{os.getuid()}"
+            if os.path.isdir(rt):
+                env["XDG_RUNTIME_DIR"] = rt
+        rt = env.get("XDG_RUNTIME_DIR")
+        bus = os.path.join(rt, "bus") if rt else None
+        if bus and not env.get("DBUS_SESSION_BUS_ADDRESS") and os.path.exists(bus):
+            env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+        _SESSION_ENV = env
+    return _SESSION_ENV
+
+
 def _systemctl(*args):
     return subprocess.run(
         ["systemctl", "--user", *args],
@@ -257,6 +285,18 @@ def _systemctl(*args):
         text=True,
         timeout=15,
         check=False,
+        env=_session_env(),
+    )
+
+
+def _journalctl(*args):
+    return subprocess.run(
+        ["journalctl", "--user", "-u", UNIT, *args, "--no-pager"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+        env=_session_env(),
     )
 
 
@@ -317,6 +357,9 @@ class Plugin:
             "SubState": props.get("SubState", ""),
             "UnitFileState": props.get("UnitFileState", ""),
             "enabled": is_enabled.returncode == 0,
+            # Surfaced in the UI: a failed `systemctl --user show` (empty
+            # stdout) is what makes the service look "unknown".
+            "error": show.stderr.strip() or None if show.returncode != 0 else None,
         }
 
     async def service_set_enabled(self, enabled: bool):
@@ -349,13 +392,7 @@ class Plugin:
         if not active:
             result["detail"] = f"service {status.get('ActiveState', 'unknown')}"
             return result
-        res = subprocess.run(
-            ["journalctl", "--user", "-u", UNIT, "-n", "200", "--no-pager"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+        res = _journalctl("-n", "200")
         state = "waiting"
         fps = None
         detail = "no gamescope session seen yet"
@@ -469,13 +506,7 @@ class Plugin:
         return {"ok": True}
 
     async def get_logs(self, n: int = 200):
-        res = subprocess.run(
-            ["journalctl", "--user", "-u", UNIT, "-n", str(n), "--no-pager"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+        res = _journalctl("-n", str(n))
         return {"ok": res.returncode == 0, "logs": res.stdout + res.stderr}
 
     async def test_frame(self):

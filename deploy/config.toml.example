@@ -54,11 +54,11 @@ smooth = 0.5
 brightness = 1.0
 
 [behavior]
-# What to send while no gamescope session is connected (or while the capture
-# is paused from the Decky UI):
+# What to send while no gamescope session is connected (file-only setting):
 # preset (send nothing; WLED falls back to its own preset after timeout_s),
 # keep-last (resend the last colors every 1 s), or black (send black).
-# Also selectable in the Decky UI (Behavior dropdown).
+# Note: while the capture is manually paused (Decky UI or start_paused),
+# nothing is sent at all and the WLED is released.
 on_no_session = "preset"
 
 [capture]
@@ -66,7 +66,7 @@ on_no_session = "preset"
 # hatch if your setup names the node differently.
 node_name = "gamescope"
 # Start with the capture paused (the Decky plugin's «Capture at startup»
-# switch). true: the daemon starts paused and the no-session behavior
-# applies until the capture is resumed (Decky UI or SIGUSR1). A change
-# of this key also applies immediately on live reload.
+# switch). true: the daemon starts paused and sends nothing to the WLED
+# (the strip is released) until the capture is resumed (Decky UI or
+# SIGUSR1). A change of this key also applies immediately on live reload.
 start_paused = false

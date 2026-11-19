@@ -25,7 +25,7 @@ scope for v1 (§15).
 | D2 | LED count / protocol cap | ≈ 270 LEDs (60/m). **490 max** (one DRGB packet) is a documented v1 constraint. DNRGB (>490, multi-packet) is out of scope v1. |
 | D3 | Start points | **8 start points** `bl bc br rc tr tc tl lc` (4 corners + 4 edge midpoints) × `direction` ∈ {`clockwise`, `counterclockwise`} viewed from the front = 16 combinations, unit-tested. |
 | D4 | Boot/session | SDDM + autologin → `systemd --user` available → user unit `gamescope-led-sync.service`, `WantedBy=default.target`. |
-| D5 | Behavior with no gamescope session | `on_no_session = "preset"`: while disconnected, send **nothing** → WLED falls back to its own preset after `timeout_s`. (During an *active* session with a static screen, the 1 s keepalive still runs, so WLED never drops to preset mid-game.) |
+| D5 | Behavior with no gamescope session | `on_no_session = "preset"`: while disconnected, send **nothing** → WLED falls back to its own preset after `timeout_s`. (During an *active* session with a static screen, the 1 s keepalive still runs, so WLED never drops to preset mid-game. A manual pause, §6.2, always releases the WLED — nothing is sent while paused.) |
 | D6 | Decky plugin privileges | **Non-root** (no `"root"` flag): the backend runs as the session user → `systemctl --user …` and writing `~/.config/…` work directly. |
 | D7 | Plugin UI language | **English**. |
 | D8 | v1 artifacts | `install.sh` + systemd user unit + Decky plugin. No Arch package/AUR in v1. |
@@ -241,23 +241,28 @@ Reconnect loop, discovery (`media.name == "gamescope"`),
 
 ### 6.1 No-session behavior (D5)
 
-While disconnected (no gamescope node / stream stopped / reconnect wait):
+While disconnected (no gamescope node / stream stopped / reconnect wait — but
+not while manually paused, §6.2):
 `keep-last` → resend `last_colors` every 1 s (current `wait_and_keepalive`);
 `black` → send black every 1 s; `preset` (default) → **send nothing**, WLED
 falls back to its preset after `timeout_s`. If no frame was ever captured, all
 three send nothing until the first frame. On clean shutdown (SIGTERM) the
 daemon sends nothing; WLED's timeout applies.
 
-### 6.2 Manual capture pause (SIGUSR1, ticket 09) and startup pause (D12, ticket 10)
+### 6.2 Manual capture pause (SIGUSR1, ticket 09; WLED release: ticket 11) and startup pause (D12, ticket 10)
 
 SIGUSR1 toggles a manual pause (the Decky plugin's Capture switch).
 `[capture] start_paused = true` starts the daemon paused the same way, and
 a reload that changes the key applies it immediately (pause or resume).
 While paused, the daemon ends any running capture session
 cleanly (the stream disconnects through its destructor, exactly like a
-normal session end) and stays in the reconnect wait, so §6.1 applies and
-live reload keeps working; no capture runs. On resume it rediscovers the
-node and reconnects. Each transition is logged once («capture paused
+normal session end) and stays in the reconnect wait, with live reload
+still working; no capture runs. While paused, «nothing is sent to the
+WLED at all» — whatever `on_no_session` says (ticket 11) — so WLED's
+realtime timeout releases the strip after the last packet's `timeout_s`
+and another owner (its own preset, another app) can take over. §6.1
+applies only to the no-session wait of an «unpaused» daemon. On resume
+it rediscovers the node and reconnects. Each transition is logged once («capture paused
 (SIGUSR1)… » / «capture resumed (SIGUSR1)», plus «capture paused at
 startup ([capture] start_paused = true)») so the plugin can parse the
 state from the journal (§10.1 `capture_status`).
@@ -350,7 +355,12 @@ restarts `plugin_loader`). UI language: English (D7).
 
 ### 10.1 Backend (`main.py`, `class Plugin`)
 
-Runs as the session user. Constants: `CONFIG =
+Runs as the session user. The loader runs as root and forks the backend
+with the root environment, so `XDG_RUNTIME_DIR` and
+`DBUS_SESSION_BUS_ADDRESS` are missing and every `systemctl --user` /
+`journalctl --user` call would fail ("Failed to connect to user scope
+bus") — the backend fills them in (`_session_env()`, pointing at
+`/run/user/<uid>`) for each `--user` subprocess. Constants: `CONFIG =
 ~/.config/gamescope-led-sync/config.toml`, `BINARY =
 /usr/bin/gamescope-led-sync`, unit name `gamescope-led-sync`. Methods:
 
@@ -358,7 +368,7 @@ Runs as the session user. Constants: `CONFIG =
 | ------ | ------ |
 | `get_config()` | Parse the TOML (`tomllib`), return the dict (defaults merged). |
 | `save_config(cfg)` | Validate (Python mirror of §4.3), write **atomically** (tmp + `rename`), return `{ok, errors}`. The daemon applies it at the next tick (§7). Used by the main page (debounced) and by the configuration screen's «Save and quit». |
-| `service_status()` | `systemctl --user show gamescope-led-sync -p ActiveState,SubState,UnitFileState` (+ `is-enabled`). |
+| `service_status()` | `systemctl --user show gamescope-led-sync -p ActiveState,SubState,UnitFileState` (+ `is-enabled`); returns `{ok, ActiveState, SubState, UnitFileState, enabled, error?}` — `error` carries the `systemctl` stderr when the `show` call fails (empty stdout would otherwise read as `unknown`). |
 | `service_set_enabled(bool)` | `systemctl --user enable` / `disable`. |
 | `service_start/stop/restart()` | `systemctl --user …`. |
 | `capture_status()` | Service ActiveState plus the capture phase parsed from the last 200 journal lines: `capturing` (last «found gamescope node»), `waiting` («session ended»/«retrying»/«waiting for the gamescope node»/«capture resumed»), `paused` («capture paused»), `inactive` (service not active); also the live fps from the last stats line. Returns `{ok, active, state, fps, detail}`. |
