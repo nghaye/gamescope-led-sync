@@ -63,12 +63,13 @@ Value precedence: **CLI flag > config file > built-in default**. The daemon stat
 |               | `brightness`    | `1.0`         | `0.0..=1.0`                            |
 | `[behavior]`  | `on_no_session` | `"preset"`    | `keep-last\|black\|preset`             |
 | `[capture]`   | `node_name`     | `"gamescope"` | non-empty `media.name` of the node     |
+|               | `start_paused`  | `false`       | bool; start with the capture paused (Decky «Capture at startup») |
 
 See [deploy/config.toml.example](./deploy/config.toml.example) for a fully commented example (the 65" strip: `top=86 right=48 bottom=86 left=48`, `start="bc"`, `direction="clockwise"`, `offset=0`).
 
 ### CLI overrides
 
-One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, plus debug-only `--once`, `--dump PNG`, `--preview`. Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
+One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, `--start-paused` (start with the capture paused), plus debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip` (send the per-segment test pattern to WLED until SIGTERM). Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
 
 ## Service management
 
@@ -91,7 +92,12 @@ The perimeter is a cyclic list of `count = top+right+bottom+left` zones. The str
 
 ## Decky plugin
 
-`plugin/` is a [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin (no root flag; runs as the session user): service controls (enable at boot, start/stop/restart, logs, test one frame), a live capture status line (capturing / waiting / paused) with **Stop capture** / **Start capture** buttons (SIGUSR1 pause; the configured no-session behavior drives the strip while paused), WLED host/port, strip layout and offset slider, the image sliders, and the no-session behavior dropdown — every change saves (debounced 400 ms) and goes live at the daemon's next tick. `wled.timeout_s` stays file-only. `deploy/install.sh` does **not** install the plugin — run `./plugin/install.sh` once as the normal user (no sudo: it installs through Decky Loader's local API; `--direct` falls back to a sudo copy + loader restart). See [plugin/README.md](./plugin/README.md).
+`plugin/` is a [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin (no root flag; runs as the session user) with two pages:
+
+- **Main page**: status lines (service, capture, live FPS, WLED strip reachability — polled every 5 s), a **Capture** switch (SIGUSR1 pause/resume; the configured no-session behavior drives the strip while paused), a **Capture at startup** switch (`[capture] start_paused`, persisted in the config file and applied immediately on change), the **Brightness / Gamma / Saturation / Smooth** sliders, and a **Configuration** button. Sliders and switches save on change (debounced 400 ms) and go live at the daemon's next tick, and are reloaded at boot.
+- **Configuration screen**: entering it pauses the capture (resumed on exit) and lights each of the 4 strip segments in its own color (bottom red, left blue, top green, right yellow) via the daemon's `--preview-strip` mode; every change is previewed live on the strip but **written to the config file only on «Save and quit»** («Cancel» leaves without saving). Fields: WLED host/IP with a green OK / red NOK reachability check, start point (8 full-word options), clockwise rotation switch, per-segment LED counts with a live total, offset slider (−20…+20), screen band slider (1–20 %), FPS.
+
+`wled.timeout_s`, `wled.port`, `sample_height`, `behavior.on_no_session` and `capture.node_name` stay file-only. `deploy/install.sh` does **not** install the plugin — run `./plugin/install.sh` once as the normal user (no sudo: it installs through Decky Loader's local API; `--direct` falls back to a sudo copy + loader restart). See [plugin/README.md](./plugin/README.md).
 
 ## Protocol notes
 
@@ -102,7 +108,7 @@ While no gamescope session is connected, `on_no_session` decides what is sent: `
 ## Troubleshooting
 
 - Logs: `journalctl --user -u gamescope-led-sync -f`.
-- Capture one frame and save it: `gamescope-led-sync --once --dump frame.png` (the Decky plugin's _Test one frame_ does this and shows the PNG).
+- Capture one frame and save it: `gamescope-led-sync --once --dump frame.png`.
 - See the edge colors live on a terminal: `--preview`.
 - Never send anything, log only: `--dry-run`.
 - Use a custom config file: `--config /path/to/config.toml`.
@@ -117,7 +123,7 @@ cargo run -- --help
 
 The unit tests cover the geometry truth table (16 start × direction combos), offset cases, color grading, config parse/validate, CLI > file > default precedence, and live reload; `tests/cli.rs` covers the exit-code-2 contract and the `--help` surface at the process level.
 
-Manual E2E checklist: `./deploy/install.sh --enable`; launch a game and verify the LEDs follow the screen edges; move the offset slider in the Decky plugin and see the shift within one frame; try `--once --dump` + `--preview`; try `--dry-run`.
+Manual E2E checklist: `./deploy/install.sh --enable`; launch a game and verify the LEDs follow the screen edges; in the Decky plugin's configuration screen, change a segment length and see the colored preview update immediately, then «Save and quit» and watch the live capture resume with the new layout; try `--once --dump` + `--preview`; try `--dry-run`.
 
 ## License
 

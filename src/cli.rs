@@ -101,6 +101,11 @@ struct Cli {
     #[arg(long, default_value_t = 1.0)]
     brightness: f32,
 
+    /// Start with the capture paused (overrides [capture] start_paused;
+    /// the Decky plugin's «capture at startup» switch writes the file key)
+    #[arg(long)]
+    start_paused: bool,
+
     /// Process one frame and exit
     #[arg(long)]
     once: bool,
@@ -112,6 +117,12 @@ struct Cli {
     /// Draw the edge colors as ANSI bars on this terminal
     #[arg(long)]
     preview: bool,
+
+    /// Send the per-segment test pattern (bottom red, left blue, top
+    /// green, right yellow) to WLED until SIGTERM; used by the Decky
+    /// plugin's configuration screen. Debug-only, never in the file
+    #[arg(long)]
+    preview_strip: bool,
 }
 
 /// Emit a clap-styled error and exit, for validation clap cannot express
@@ -225,10 +236,15 @@ fn merge(cli: &Cli, matches: &clap::ArgMatches, mut cfg: Config) -> Result<Confi
     };
     cfg.layout = Layout::new(top, right, bottom, left, start, direction, offset)?;
 
+    if on_cli("start_paused") {
+        cfg.start_paused = cli.start_paused;
+    }
+
     cfg.dry_run = cli.dry_run;
     cfg.once = cli.once;
     cfg.dump = cli.dump.clone();
     cfg.preview = cli.preview;
+    cfg.preview_strip = cli.preview_strip;
 
     cfg.validate()?;
     Ok(cfg)
@@ -376,6 +392,40 @@ mod tests {
     fn counterclockwise_flag_is_gone() {
         let args = ["gamescope-led-sync", "--counterclockwise"];
         assert!(Cli::command().try_get_matches_from(args).is_err());
+    }
+
+    #[test]
+    fn start_paused_flag_overrides_the_file() {
+        let file = file_config("[capture]\nstart_paused = false\n");
+        let (cli, matches) = cli_from(&["gamescope-led-sync", "--start-paused"]);
+        assert!(merge(&cli, &matches, file).unwrap().start_paused);
+        // Absent flag keeps the file's value.
+        let file = file_config("[capture]\nstart_paused = true\n");
+        let (cli, matches) = cli_from(&["gamescope-led-sync"]);
+        assert!(merge(&cli, &matches, file).unwrap().start_paused);
+        // And the built-in default is false.
+        let (cli, matches) = cli_from(&["gamescope-led-sync"]);
+        assert!(
+            !merge(&cli, &matches, Config::defaults())
+                .unwrap()
+                .start_paused
+        );
+    }
+
+    #[test]
+    fn preview_strip_is_a_cli_only_flag() {
+        let (cli, matches) = cli_from(&["gamescope-led-sync", "--preview-strip"]);
+        let cfg = merge(&cli, &matches, Config::defaults()).unwrap();
+        assert!(cfg.preview_strip);
+        assert!(!Config::defaults().preview_strip);
+        // The file cannot set it: unknown key.
+        assert!(
+            Config::from_file_content(
+                &PathBuf::from("t.toml"),
+                "[capture]\npreview_strip = true\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]

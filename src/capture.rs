@@ -102,6 +102,13 @@ pub fn paused() -> bool {
     PAUSED.load(Ordering::SeqCst)
 }
 
+/// Set the manual pause explicitly instead of toggling: used at
+/// startup and on live reload when [capture] start_paused changes
+/// (D12). SIGUSR1 keeps toggling on top of whatever was set here.
+pub fn set_paused(v: bool) {
+    PAUSED.store(v, Ordering::SeqCst);
+}
+
 pub enum Reason {
     OnceDone,
     OnceFailed(String),

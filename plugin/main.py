@@ -6,8 +6,12 @@ applies changes live at the next tick (≤ 1/fps), so save_config only has
 to validate and write the file atomically (temp file + rename).
 """
 
+import http.client
+import json
 import os
 import re
+import signal
+import socket
 import subprocess
 import tempfile
 import tomllib
@@ -48,7 +52,7 @@ DEFAULTS = {
         "brightness": 1.0,
     },
     "behavior": {"on_no_session": "preset"},
-    "capture": {"node_name": "gamescope"},
+    "capture": {"node_name": "gamescope", "start_paused": False},
 }
 
 # The file schema (SPEC §4.2), in file order: unknown keys are a hard
@@ -58,12 +62,87 @@ SCHEMA = {
     "layout": ["top", "right", "bottom", "left", "start", "direction", "offset"],
     "processing": ["fps", "sample_height", "band_frac", "saturation", "gamma", "smooth", "brightness"],
     "behavior": ["on_no_session"],
-    "capture": ["node_name"],
+    "capture": ["node_name", "start_paused"],
 }
 
 START_CODES = ["bl", "bc", "br", "rc", "tr", "tc", "tl", "lc"]
 DIRECTIONS = ["clockwise", "counterclockwise"]
 ON_NO_SESSION = ["keep-last", "black", "preset"]
+
+# WLED's HTTP port, probed with GET /json/info (same probe as --setup).
+WLED_HTTP_PORT = 80
+PROBE_TIMEOUT_S = 3.0
+
+# The running --preview-strip subprocess of the configuration screen
+# (ticket 10): the plugin spawns it with the draft layout as CLI flags
+# and respawns it on every draft change; preview_stop kills it.
+_preview_proc = None
+
+
+def _pdeathsig():
+    """preexec_fn: die with the plugin backend if the loader goes away,
+    so a preview process never lingers on the strip (Linux prctl)."""
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+    except Exception:
+        pass
+
+
+def _probe_wled(host, timeout=PROBE_TIMEOUT_S):
+    """GET /json/info on the WLED controller (port 80). Returns
+    (info, None) when reachable, (None, error) otherwise."""
+    try:
+        addrs = socket.getaddrinfo(host, WLED_HTTP_PORT, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as e:
+        return None, f"cannot resolve {host}: {e}"
+    last = None
+    for family, _stype, _proto, _canon, addr in addrs:
+        try:
+            conn = http.client.HTTPConnection(addr[0], WLED_HTTP_PORT, timeout=timeout)
+            conn.request("GET", "/json/info", headers={"Host": host, "Connection": "close"})
+            resp = conn.getresponse()
+            body = resp.read().decode("utf-8", "replace")
+            conn.close()
+            if resp.status != 200:
+                return None, f"{host}: HTTP {resp.status} on /json/info"
+            ver = None
+            try:
+                ver = json.loads(body).get("ver")
+            except ValueError:
+                pass
+            return "HTTP 200 on /json/info" + (f" (WLED {ver})" if ver else ""), None
+        except OSError as e:
+            last = f"{addr[0]}: {e}"
+    return None, f"cannot connect to {host}:{WLED_HTTP_PORT}: {last}"
+
+
+def _layout_args(layout):
+    """The draft layout as CLI flags overriding the config file (§4.1)."""
+    return [
+        "--top", str(int(layout["top"])),
+        "--right", str(int(layout["right"])),
+        "--bottom", str(int(layout["bottom"])),
+        "--left", str(int(layout["left"])),
+        "--start", str(layout["start"]),
+        "--direction", str(layout["direction"]),
+        "--offset", str(int(layout["offset"])),
+    ]
+
+
+def _stop_preview():
+    global _preview_proc
+    if _preview_proc is not None:
+        try:
+            _preview_proc.terminate()
+            _preview_proc.wait(timeout=5)
+        except Exception:
+            try:
+                _preview_proc.kill()
+            except Exception:
+                pass
+        _preview_proc = None
 
 
 def _err(errors, field, value, bound):
@@ -137,6 +216,9 @@ def validate(cfg):
     node_name = capture.get("node_name")
     if node_name is not None and (not isinstance(node_name, str) or not node_name):
         _err(errors, "capture.node_name", node_name, "non-empty")
+    start_paused = capture.get("start_paused")
+    if start_paused is not None and not isinstance(start_paused, bool):
+        _err(errors, "capture.start_paused", start_paused, "a boolean")
 
     # Layout rules (SPEC §4.3/§5.2): count >= 1, packet length <= 490,
     # and a midpoint start needs its edge to have at least 1 LED.
@@ -310,6 +392,80 @@ class Plugin:
         res = _systemctl("kill", UNIT, "--signal=SIGUSR1")
         if res.returncode != 0:
             return {"ok": False, "error": res.stderr.strip() or "could not signal the daemon"}
+        return {"ok": True}
+
+    async def probe_wled(self, host):
+        """Reachability check for the WLED controller: HTTP GET /json/info
+        on port 80 (same probe as --setup). Drives the green OK / red NOK
+        next to the host field on the configuration screen."""
+        host = (host or "").strip()
+        if not host:
+            return {"ok": False, "error": "empty host"}
+        info, err = _probe_wled(host)
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "info": info}
+
+    async def wled_status(self):
+        """Strip status for the main page: probe the configured host."""
+        res = await self.get_config()
+        host = ((res.get("config") or {}).get("wled") or {}).get("host")
+        if not host:
+            return {"ok": True, "configured": False, "reachable": False}
+        probe = await self.probe_wled(host)
+        return {
+            "ok": True,
+            "configured": True,
+            "host": host,
+            "reachable": probe["ok"],
+            "info": probe.get("info"),
+            "error": probe.get("error"),
+        }
+
+    async def preview_set(self, host, port, timeout_s, layout):
+        """Start (or respawn) the --preview-strip process with the draft
+        layout, so every change on the configuration screen has an
+        immediate effect on the strip without writing the config file.
+        The draft is validated first; an invalid draft is not spawned."""
+        global _preview_proc
+        host = (host or "").strip()
+        if not host:
+            return {"ok": False, "errors": ["wled.host: empty host"]}
+        merged = _deep_merge(
+            DEFAULTS,
+            {"wled": {"host": host, "port": port, "timeout_s": timeout_s}, "layout": layout},
+        )
+        errors = validate(merged)
+        if errors:
+            return {"ok": False, "errors": errors}
+        if not os.path.exists(BINARY):
+            return {"ok": False, "errors": [f"binary not found: {BINARY} (run install.sh first)"]}
+        _stop_preview()
+        args = [
+            BINARY,
+            "--preview-strip",
+            "--wled", host,
+            "--port", str(int(port)),
+            "--timeout", str(int(timeout_s)),
+            *_layout_args(layout),
+        ]
+        try:
+            _preview_proc = subprocess.Popen(
+                args,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=_pdeathsig,
+            )
+        except OSError as e:
+            _preview_proc = None
+            return {"ok": False, "errors": [f"could not spawn {BINARY}: {e}"]}
+        l = merged["layout"]
+        return {"ok": True, "packet_len": sum(l[e] for e in ("top", "right", "bottom", "left")) + max(l["offset"], 0)}
+
+    async def preview_stop(self):
+        """Stop the strip preview (leaving the configuration screen)."""
+        _stop_preview()
         return {"ok": True}
 
     async def get_logs(self, n: int = 200):

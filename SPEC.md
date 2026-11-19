@@ -29,16 +29,19 @@ scope for v1 (§15).
 | D6 | Decky plugin privileges | **Non-root** (no `"root"` flag): the backend runs as the session user → `systemctl --user …` and writing `~/.config/…` work directly. |
 | D7 | Plugin UI language | **English**. |
 | D8 | v1 artifacts | `install.sh` + systemd user unit + Decky plugin. No Arch package/AUR in v1. |
-| D9 | Extra plugin parameters | Sliders: **brightness** (0–100 %), **band_frac** (2–20 %), **smooth** (0.05–1.0). Numeric: **fps** (10–60), **sample_height** (120–480, «Advanced»). |
-| D10 | «Test one frame» button | Yes: runs the binary with `--once --dump`, the PNG is served by the plugin (`/plugins/<name>/data/last-frame.png`) and shown in a modal. |
-| D11 | Offset slider range in the UI | **−30 … +30, step 1** (fixed range). |
+| D9 | Extra plugin parameters | Sliders: **brightness** (0–100 %), **band_frac** (1–20 %), **smooth** (0.05–1.0). Numeric: **fps** (10–60), **sample_height** (120–480, «Advanced»). |
+| D10 | «Test one frame» button | Backend method only (no UI button since the ticket-10 refonte): runs the binary with `--once --dump`, the PNG is served by the plugin (`/plugins/<name>/data/last-frame.png`). |
+| D11 | Offset slider range in the UI | **−20 … +20, step 1** (fixed range; ticket 10 narrowed it from −30…+30). |
+| D12 | Capture at startup | `[capture] start_paused = false` (bool): the daemon starts paused when `true` (the Decky «Capture at startup» switch); a change of the key also applies **immediately** on live reload (§7). CLI override: `--start-paused`. |
 
 Defaults chosen by default (flagged, correctable in the file): config example uses
 the 65" strip `top=86 right=48 bottom=86 left=48` (268 LEDs), `start="bc"`
 (owner's strip starts bottom-center), `direction="clockwise"`, `offset=0`.
 `wled.timeout_s` (default 2) stays **file-only** — not exposed in the Decky
-UI (not selected in D9). `behavior.on_no_session` (default `"preset"`) is
-exposed in the Decky UI (Behavior dropdown, ticket 09).
+UI (not selected in D9). `behavior.on_no_session` (default `"preset"`) and
+`capture.start_paused` (default `false`, D12) are file-only since the
+ticket-10 refonte; the Decky plugin exposes the startup switch but not the
+no-session dropdown.
 
 ## 3. Repository layout (v1)
 
@@ -70,7 +73,7 @@ Crate version: `0.1.0`.
 
 Value precedence: **CLI flag > config file > built-in default**.
 CLI-only flags (never in the file): `--config`, `--setup`, `--dry-run`, `--once`,
-`--dump`, `--preview`.
+`--dump`, `--preview`, `--preview-strip`.
 
 ### 4.2 Schema, defaults, bounds
 
@@ -92,17 +95,18 @@ offset = 0              # integer; packet length = count + max(offset,0) <= 490
 [processing]
 fps = 30                # 1..240 (UI: 10..60)
 sample_height = 240     # 1..16384 (UI: 120..480)
-band_frac = 0.08        # >0 and <1 (UI: 0.02..0.20)
+band_frac = 0.08        # >0 and <1 (UI: 0.01..0.20)
 saturation = 1.0        # >=0 (UI: 0.0..3.0, step 0.05)
 gamma = 1.0             # >0 (UI: 0.5..2.5, step 0.05)
 smooth = 0.5            # >0; 1.0 disables smoothing (UI: 0.05..1.0)
 brightness = 1.0        # 0.0..1.0 (UI: 0..100 %)
 
 [behavior]
-on_no_session = "preset" # keep-last | black | preset  (D5; Decky UI: Behavior dropdown)
+on_no_session = "preset" # keep-last | black | preset  (D5)
 
 [capture]
 node_name = "gamescope"  # media.name of the gamescope PipeWire node; advanced, file-only
+start_paused = false     # bool (D12): start with the capture paused; Decky «Capture at startup»
 ```
 
 No schema-version key in v1: unknown keys are rejected (§4.3), and a `version`
@@ -127,7 +131,11 @@ plus one flag per config field: `--wled HOST`, `--port`, `--timeout`,
 `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction
 <clockwise|counterclockwise>` (replaces `--counterclockwise`), `--offset N`,
 `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`,
-`--brightness`, and debug-only `--once`, `--dump PNG`, `--preview`, plus
+`--brightness`, `--start-paused` (forces `[capture] start_paused = true`),
+and debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip`
+(sends the per-segment test pattern — bottom red, left blue, top green,
+right yellow — to WLED until SIGTERM; used by the Decky plugin's
+configuration screen for the live preview), plus
 `--setup`: interactive first-run setup that asks for the WLED host and the
 strip layout (LED counts per edge, start point, direction), probes the
 controller over HTTP (`GET /json/info`) when the host is entered, lights
@@ -240,15 +248,18 @@ falls back to its preset after `timeout_s`. If no frame was ever captured, all
 three send nothing until the first frame. On clean shutdown (SIGTERM) the
 daemon sends nothing; WLED's timeout applies.
 
-### 6.2 Manual capture pause (SIGUSR1, ticket 09)
+### 6.2 Manual capture pause (SIGUSR1, ticket 09) and startup pause (D12, ticket 10)
 
-SIGUSR1 toggles a manual pause (the Decky plugin's Stop/Start capture
-buttons). While paused, the daemon ends any running capture session
+SIGUSR1 toggles a manual pause (the Decky plugin's Capture switch).
+`[capture] start_paused = true` starts the daemon paused the same way, and
+a reload that changes the key applies it immediately (pause or resume).
+While paused, the daemon ends any running capture session
 cleanly (the stream disconnects through its destructor, exactly like a
 normal session end) and stays in the reconnect wait, so §6.1 applies and
 live reload keeps working; no capture runs. On resume it rediscovers the
 node and reconnects. Each transition is logged once («capture paused
-(SIGUSR1)… » / «capture resumed (SIGUSR1)») so the plugin can parse the
+(SIGUSR1)… » / «capture resumed (SIGUSR1)», plus «capture paused at
+startup ([capture] start_paused = true)») so the plugin can parse the
 state from the journal (§10.1 `capture_status`).
 
 ## 7. Live reload (immediate changes, no restart)
@@ -260,7 +271,10 @@ validate:
   `WledSender` if `wled.host`/`port` changed (`timeout_s` is per-packet, no
   recreation needed; if the new host does not resolve, warn and keep the old
   sender); reset smoothing if `count` changed; if `fps` changed, update the
-  session timer interval; if the layout changed, log the layout line again;
+  session timer interval; if `capture.start_paused` changed, apply the pause
+  immediately (`capture::set_paused`, D12 — only on an actual change of the
+  key, so a SIGUSR1 toggle is not overridden by an unrelated reload);
+  if the layout changed, log the layout line again;
   log each changed field at `info!`;
 - invalid → `warn!` with the field error, **previous config stays active**;
 - file deleted/unreadable → keep the current config, one debug log when the
@@ -343,46 +357,71 @@ Runs as the session user. Constants: `CONFIG =
 | Method | Action |
 | ------ | ------ |
 | `get_config()` | Parse the TOML (`tomllib`), return the dict (defaults merged). |
-| `save_config(cfg)` | Validate (Python mirror of §4.3), write **atomically** (tmp + `rename`), return `{ok, errors}`. The daemon applies it at the next tick (§7). |
+| `save_config(cfg)` | Validate (Python mirror of §4.3), write **atomically** (tmp + `rename`), return `{ok, errors}`. The daemon applies it at the next tick (§7). Used by the main page (debounced) and by the configuration screen's «Save and quit». |
 | `service_status()` | `systemctl --user show gamescope-led-sync -p ActiveState,SubState,UnitFileState` (+ `is-enabled`). |
 | `service_set_enabled(bool)` | `systemctl --user enable` / `disable`. |
 | `service_start/stop/restart()` | `systemctl --user …`. |
 | `capture_status()` | Service ActiveState plus the capture phase parsed from the last 200 journal lines: `capturing` (last «found gamescope node»), `waiting` («session ended»/«retrying»/«waiting for the gamescope node»/«capture resumed»), `paused` («capture paused»), `inactive` (service not active); also the live fps from the last stats line. Returns `{ok, active, state, fps, detail}`. |
 | `capture_set_paused(bool)` | Manual capture pause via `systemctl --user kill --signal=SIGUSR1 gamescope-led-sync` (§6.2). Refuses when the service is not active; only signals when the parsed state differs from the request. Returns `{ok, error?}`. |
-| `get_logs(n=200)` | `journalctl --user -u gamescope-led-sync -n N --no-pager`. |
-| `test_frame()` | Refuses when the service is active (two capture clients on one gamescope node are unsupported, §6.0): `{ok:false, error:"stop the service first"}`. Otherwise runs `[BINARY, "--config", CONFIG, "--once", "--dump", <plugin data dir>/last-frame.png]` (timeout 30 s; clear error if the binary is missing) and returns `{ok, log}`. PNG written to `DECKY_PLUGIN_RUNTIME_DIR` and served at `/plugins/<plugin.json name, URL-encoded>/data/last-frame.png` — the loader keys served URLs by display name, not by install folder. |
+| `probe_wled(host)` | Reachability check: HTTP `GET /json/info` on port 80 (same probe as `--setup`), 3 s timeout. Returns `{ok, info?}` / `{ok:false, error}`. Drives the green OK / red NOK next to the host field. |
+| `wled_status()` | `probe_wled` on the configured `wled.host`; returns `{ok, configured, host?, reachable, info?, error?}`. Strip status line of the main page. |
+| `preview_set(host, port, timeout_s, layout)` | Validate the draft layout (Python mirror of §4.3), then (re)spawn `BINARY --preview-strip --wled host --port port --timeout S --top … --right … --bottom … --left … --start … --direction … --offset …` (the draft layout as CLI flags overrides the file, §4.1) with `PR_SET_PDEATHSIG` so it dies with the plugin. Returns `{ok, packet_len}` or `{ok:false, errors}`; an invalid draft is not spawned. |
+| `preview_stop()` | Terminate the preview process. Called when leaving the configuration screen. |
+| `get_logs(n=200)` | `journalctl --user -u gamescope-led-sync -n N --no-pager`. (No UI button since the ticket-10 refonte.) |
+| `test_frame()` | Refuses when the service is active (two capture clients on one gamescope node are unsupported, §6.0): `{ok:false, error:"stop the service first"}`. Otherwise runs `[BINARY, "--config", CONFIG, "--once", "--dump", <plugin data dir>/last-frame.png]` (timeout 30 s; clear error if the binary is missing) and returns `{ok, log}`. PNG written to `DECKY_PLUGIN_RUNTIME_DIR` and served at `/plugins/<plugin.json name, URL-encoded>/data/last-frame.png` — the loader keys served URLs by display name, not by install folder. (No UI button since the ticket-10 refonte.) |
 
-### 10.2 Frontend (`src/index.tsx`) — control mapping
+### 10.2 Frontend (`src/index.tsx`) — two views (ticket 10)
 
-- **Service** section: `ToggleField` «Enabled at boot» ↔ `service_set_enabled`;
-  status line (`ActiveState`/`SubState`); a read-only **Capture** line
-  (`capture_status`: capturing + live fps / waiting for gamescope / paused /
-  inactive; refreshed on mount, after every action, and every 5 s);
-  `ButtonItem`s Start / Stop / Restart / **Stop capture** / **Start capture**
-  (`capture_set_paused`, §6.2 — disabled when not applicable) /
-  View logs (modal with `get_logs`) / Test frame (D10: modal with
-  `<img src="/plugins/gamescope-led-sync/data/last-frame.png?ts=…">`).
-- **WLED**: `TextField` host; numeric `TextField` port (1–65535).
-- **LED strip**: four numeric `TextField`s:
-  top/right/bottom/left (0–490, sum constraint checked on save); directly
-  **below** these fields, a **read-only, non-editable** line shows the total LED
-  count `count = top + right + bottom + left` (recomputed live as any of the
-  four fields changes); `DropdownField` start (8 labelled options);
-  `DropdownField` direction (Clockwise / Counterclockwise, viewed from the
-  front); `SliderField` offset, **min −30, max +30, step 1** (D11), value shown.
-- **Image**: `SliderField` saturation (0–3, step 0.05), gamma (0.5–2.5, step
-  0.05), brightness (0–100 %), band (2–20 %), smooth (0.05–1.0, step 0.05);
-  numeric fps (10–60); «Advanced»: numeric sample_height (120–480).
-- Saving: every control saves on change, **debounced 400 ms**, via
-  `save_config`; a status line shows «Saved ✓» or the validation errors (the
-  file is not written when invalid). No separate Apply button — changes are
-  live (daemon reloads at the next tick).
-- **Behavior** section: `DropdownItem` «When no gamescope session is active»
-  ↔ `behavior.on_no_session` (preset / keep-last / black, D5).
-- A hint line shows the computed packet length `L = count + max(offset, 0)`
-  («set your WLED segment length to L») and is highlighted whenever L changes
-  (§11).
-- `wled.timeout_s`: file-only (D9), documented in the plugin README.
+One `Content` component with `mode: "main" | "config"`.
+
+**Main page** — only these controls:
+
+- **Status** section (refreshed on mount and every 5 s): `Field` service
+  (`ActiveState`/`SubState` + enabled), `Field` capture (`capture_status`
+  state + detail), `Field` FPS (live `capture_status.fps`), `Field` WLED
+  strip (`wled_status`: reachable / not reachable / not configured, with the
+  probe detail).
+- **Capture** section: `ToggleField` «Capture» ↔ `capture_set_paused`
+  (SIGUSR1, immediate, runtime-only; disabled when the service is not
+  active); `ToggleField` «Capture at startup» ↔ `capture.start_paused`
+  (D12), saved via `save_config` — immediate effect on reload and persisted
+  for boot.
+- **Image** section: `SliderField` brightness (0–100 %), gamma (0.5–2.5,
+  step 0.05), saturation (0–3, step 0.05), smooth (0.05–1.0, step 0.05).
+- **Configuration** section: `ButtonItem` «Configuration» → configuration
+  screen.
+- Saving on the main page: every control saves on change, **debounced
+  400 ms**, via `save_config` — the effect is live at the daemon's next tick
+  and the value is reloaded at boot. No status line (all main-page controls
+  are within the §4.3 bounds, so a save cannot fail).
+
+**Configuration screen** — entered via the Configuration button:
+
+- On entry the capture is **paused** (`capture_set_paused(true)`, only if
+  not already paused; remembered to resume on exit), and `preview_set` is
+  called with the current config: the strip lights each segment in its own
+  color — **bottom red, left blue, top green, right yellow** — via the
+  daemon's `--preview-strip` mode, so the user sees the segments while
+  editing their lengths.
+- Every draft change calls `preview_set` again (debounced 300 ms; the
+  backend respawns the preview process with the new layout as CLI flags).
+  **Nothing is written to the config file until «Save and quit»** — the
+  immediate effect on the strip goes exclusively through the preview.
+- Fields: `TextField` WLED host/IP + a «Host check» `Field` showing a green
+  **OK** / red **NOK** from `probe_wled` (probed on change, debounced 600 ms);
+  `DropdownItem` start point (8 **full-word** labels, no codes);
+  `ToggleField` clockwise rotation (on = clockwise, off = counterclockwise);
+  four numeric `TextField`s for the segment lengths (bottom, left, top,
+  right); a read-only `Field` with the total active LED count
+  (`top + right + bottom + left = N`, recomputed live); `SliderField`
+  offset **−20 … +20, step 1** (D11); `SliderField` screen band **1–20 %**;
+  numeric `TextField` FPS.
+- «Save and quit»: `save_config(draft)` (validation errors are shown and the
+  screen stays), `preview_stop`, resume the capture if we paused it, back to
+  the main page. «Cancel»: `preview_stop`, resume if needed, back to the main
+  page, config file untouched.
+- `wled.timeout_s`, `wled.port`, `sample_height`, `behavior.on_no_session`,
+  `capture.node_name`: file-only (D9/D12), documented in the plugin README.
 
 ## 11. WLED prerequisites (documented in README)
 
@@ -399,7 +438,11 @@ Runs as the session user. Constants: `CONFIG =
   table); midpoint split semantics; offset cases (0, +n, −n, `L=490` ok,
   `L=491` rejected); grading order incl. brightness; DRGB packet with black
   head; config TOML parse/validate (one test per error class); CLI>file>default
-  merge precedence; reload apply (valid swap / invalid keeps old).
+  merge precedence; reload apply (valid swap / invalid keeps old);
+  ticket 10: `[capture] start_paused` (file parse, `--start-paused` override,
+  reload applies the pause flag on change) and the `--preview-strip`
+  segment pattern (bottom red / left blue / top green / right yellow through
+  `chain` + `apply_offset`, incl. midpoint start and black-head offset).
 - `--dump` / `--preview` grade with saturation + gamma + brightness, so the
   diagnostics match the LED output exactly.
 - New files must pass the existing `just` recipes (markdownlint on SPEC.md and

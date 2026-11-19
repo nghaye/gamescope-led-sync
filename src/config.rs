@@ -39,7 +39,7 @@ impl OnNoSession {
 }
 
 /// The runtime configuration. CLI-only flags (--config, --dry-run,
-/// --once, --dump, --preview) never appear in the file.
+/// --once, --dump, --preview, --preview-strip) never appear in the file.
 #[derive(Clone, Debug)]
 pub struct Config {
     pub wled: Option<String>,
@@ -55,10 +55,14 @@ pub struct Config {
     pub brightness: f32,
     pub on_no_session: OnNoSession,
     pub node_name: String,
+    /// Start with the capture paused (the Decky plugin's «capture at
+    /// startup» switch, D12). Applied at startup and on live reload.
+    pub start_paused: bool,
     pub dry_run: bool,
     pub once: bool,
     pub dump: Option<String>,
     pub preview: bool,
+    pub preview_strip: bool,
 }
 
 /// Why a config file or a value was rejected (§4.3).
@@ -143,6 +147,7 @@ pub struct BehaviorFile {
 #[serde(deny_unknown_fields, default)]
 pub struct CaptureFile {
     pub node_name: Option<String>,
+    pub start_paused: Option<bool>,
 }
 
 /// A discovered config file and where it came from (§4.1).
@@ -216,10 +221,12 @@ impl Config {
             brightness: 1.0,
             on_no_session: OnNoSession::Preset,
             node_name: "gamescope".to_string(),
+            start_paused: false,
             dry_run: false,
             once: false,
             dump: None,
             preview: false,
+            preview_strip: false,
         }
     }
 
@@ -321,6 +328,9 @@ impl Config {
 
         if let Some(s) = &f.capture.node_name {
             self.node_name = s.clone();
+        }
+        if let Some(v) = f.capture.start_paused {
+            self.start_paused = v;
         }
         Ok(())
     }
@@ -426,6 +436,7 @@ mod tests {
             on_no_session = "black"
             [capture]
             node_name = "gamescope-alt"
+            start_paused = true
             "#,
         )
         .unwrap();
@@ -446,6 +457,7 @@ mod tests {
         assert_eq!(cfg.brightness, 0.5);
         assert_eq!(cfg.on_no_session, OnNoSession::Black);
         assert_eq!(cfg.node_name, "gamescope-alt");
+        assert!(cfg.start_paused);
     }
 
     #[test]
@@ -459,7 +471,17 @@ mod tests {
         assert_eq!(cfg.layout.start(), d.layout.start());
         assert_eq!(cfg.on_no_session, OnNoSession::Preset);
         assert_eq!(cfg.node_name, "gamescope");
+        assert!(!cfg.start_paused);
         assert_eq!(cfg.brightness, 1.0);
+    }
+
+    #[test]
+    fn start_paused_must_be_a_bool() {
+        assert!(matches!(
+            parse("[capture]\nstart_paused = \"yes\"\n"),
+            Err(ConfigError::Parse { .. })
+        ));
+        assert!(parse("[capture]\nstart_paused = false\n").is_ok());
     }
 
     #[test]

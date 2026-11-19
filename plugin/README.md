@@ -3,44 +3,54 @@
 Decky Loader plugin for [gamescope-led-sync](https://github.com/nghaye/gamescope-led-sync):
 live configuration of the ambient LED backlight daemon that streams gamescope's
 capture to a WLED controller (SPEC §10). The plugin runs as the session user
-(_no root flag_, D6) and the UI is in English (D7).
+(_no root flag_, D6) and the UI is in English (D7). It has two pages.
 
-## What it does
+## Main page
 
-- **Service**: enable at boot, status, a live **capture status** line
-  (capturing + fps / waiting for gamescope / paused / inactive, parsed from
-  the journal and refreshed every 5 s), **Stop capture** / **Start capture**
-  (SIGUSR1 pause/resume in the daemon — while paused, the configured
-  no-session behavior drives the strip and live reload keeps working),
-  Start / Stop / Restart, View logs (`journalctl --user`), and **Test one
-  frame**, which runs the binary with `--once --dump` and shows the captured
-  PNG (served from the plugin data dir at
-  `/plugins/gamescope-led-sync/data/last-frame.png`). Test one frame is
-  refused while the service is active: two capture clients on one gamescope
-  node are unsupported.
-- **WLED**: host and UDP realtime port.
-- **LED strip**: the four edge counts, the start point (8 options), the
-  direction, and the offset slider (−30 … +30, step 1). The hint line shows
-  the packet length `L = count + max(offset, 0)` and is highlighted whenever
-  L changes — set your WLED segment length to L, the packet always starts at
-  WLED LED index 0.
-- **Image**: saturation, gamma, brightness, band, smooth sliders, numeric fps,
-  and an advanced numeric sample height.
-- **Behavior**: the «When no gamescope session is active» dropdown
-  (`behavior.on_no_session`: preset / keep-last / black).
+- **Status** (polled every 5 s): service state, capture state (capturing /
+  waiting for gamescope / paused / inactive), live FPS, and WLED strip
+  reachability (HTTP probe of the configured host, `GET /json/info`).
+- **Capture**: the «Capture» switch pauses/resumes the capture live
+  (SIGUSR1 in the daemon — while paused, the configured no-session behavior
+  drives the strip). The «Capture at startup» switch persists
+  `[capture] start_paused` in the config file: the daemon starts paused when
+  it is set, and toggling the switch also applies immediately on live reload.
+- **Image**: Brightness, Gamma, Saturation, Smooth sliders.
+- **Configuration**: opens the configuration screen.
 
-Every control saves on change, debounced 400 ms, through `save_config`: the
-backend validates the config (Python mirror of SPEC §4.3) and writes the file
-**atomically** (temp file + rename); the daemon applies it at the next tick
-(≤ 1/fps), no restart and no Apply button. The status line shows _Saved ✓_ or
-the validation errors, and the file is not written when invalid.
+Every slider and switch on the main page saves on change, debounced 400 ms,
+through `save_config`: the backend validates the config (Python mirror of
+SPEC §4.3) and writes the file **atomically** (temp file + rename); the
+daemon applies it at the next tick (≤ 1/fps), no restart, and the value is
+reloaded at boot.
+
+## Configuration screen
+
+Entering the screen **pauses the capture** (resumed on exit if it was
+running) and lights each of the 4 strip segments in its own color — **bottom
+red, left blue, top green, right yellow** — using the daemon's
+`--preview-strip` mode, spawned by the backend with the current layout.
+Every change (segment lengths, start point, direction, offset, WLED host)
+**immediately respawns the preview** with the draft layout, so you can check
+the segment lengths on the strip itself. **Nothing is written to the config
+file until «Save and quit»** — the immediate effect goes exclusively through
+the preview; «Cancel» leaves the screen without saving.
+
+Fields: WLED host/IP with a green **OK** / red **NOK** reachability indicator
+(probed on change), start point (8 full-word options, no codes), clockwise
+rotation switch (off = counterclockwise), the four segment LED counts with a
+live **total active LEDs** line, the offset slider (−20 … +20, step 1), the
+screen band slider (1–20 %), and FPS.
+
+«Save and quit» validates and writes the draft through `save_config`
+(validation errors are shown and the screen stays open), stops the preview,
+resumes the capture if it was paused on entry, and returns to the main page.
 
 ## File-only settings
 
-`wled.timeout_s` is **not** in the UI (D9): edit
-`~/.config/gamescope-led-sync/config.toml` directly. (`behavior.on_no_session`
-is in the UI since the Behavior dropdown; `[capture] node_name` stays
-file-only.)
+`wled.timeout_s`, `wled.port`, `processing.sample_height`,
+`behavior.on_no_session`, and `capture.node_name` are **not** in the UI:
+edit `~/.config/gamescope-led-sync/config.toml` directly.
 
 ## Build
 

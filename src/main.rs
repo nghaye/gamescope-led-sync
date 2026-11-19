@@ -14,6 +14,7 @@ mod cli;
 mod config;
 mod geometry;
 mod output;
+mod preview;
 mod reload;
 mod setup;
 
@@ -36,8 +37,24 @@ fn main() -> ExitCode {
         .init();
 
     let parsed = cli::parse();
-    pipewire::init();
     capture::install_signal_handler();
+
+    // --preview-strip is a mode, not a flag: the Decky plugin's
+    // configuration screen runs it with the draft layout as CLI flags
+    // so changes light the strip immediately without touching the file.
+    if parsed.config.preview_strip {
+        return preview::run(&parsed.config);
+    }
+
+    pipewire::init();
+
+    // [capture] start_paused (D12): start paused when the config says
+    // so; SIGUSR1 still toggles on top, and a reload applies a change of
+    // the key immediately (§7, reload.rs).
+    capture::set_paused(parsed.config.start_paused);
+    if parsed.config.start_paused {
+        tracing::info!("capture paused at startup ([capture] start_paused = true)");
+    }
 
     // The config, the WLED sender, and the last colors sent are shared
     // across sessions and mutated by the reload path, so a reconnect

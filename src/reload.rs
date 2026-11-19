@@ -71,6 +71,7 @@ impl Reloader {
                         cfg.once = current.once;
                         cfg.dump = current.dump.clone();
                         cfg.preview = current.preview;
+                        cfg.preview_strip = current.preview_strip;
                         Some(cfg)
                     },
                     Err(e) => {
@@ -104,6 +105,14 @@ pub fn reload_if_changed(
     *cfg.borrow_mut() = new.clone();
     log_changes(&old, &new);
     apply_sender(&old, &new, sender);
+    // A change of [capture] start_paused applies immediately (D12):
+    // the plugin's «capture at startup» switch pauses/resumes the
+    // running daemon, not just the next boot. Only an actual change of
+    // the key is applied, so a SIGUSR1 toggle is not overridden by an
+    // unrelated reload.
+    if old.start_paused != new.start_paused {
+        crate::capture::set_paused(new.start_paused);
+    }
     Some(new)
 }
 
@@ -151,6 +160,13 @@ pub fn log_changes(old: &Config, new: &Config) {
     }
     if old.node_name != new.node_name {
         tracing::info!("capture.node_name: {} -> {}", old.node_name, new.node_name);
+    }
+    if old.start_paused != new.start_paused {
+        tracing::info!(
+            "capture.start_paused: {} -> {}",
+            old.start_paused,
+            new.start_paused
+        );
     }
     if old.layout != new.layout {
         tracing::info!("layout: {}", new.layout.summary());
@@ -275,10 +291,11 @@ mod tests {
         cur.once = true;
         cur.dump = Some("frame.png".to_string());
         cur.preview = true;
+        cur.preview_strip = true;
         // Different length on purpose: the reload signature is mtime+len.
         fs::write(&path, "[processing]\nfps = 90\n# tuned\n").unwrap();
         let new = r.poll(&cur).unwrap();
-        assert!(new.dry_run && new.once && new.preview);
+        assert!(new.dry_run && new.once && new.preview && new.preview_strip);
         assert_eq!(new.dump.as_deref(), Some("frame.png"));
         assert_eq!(new.fps, 90.0);
         fs::remove_dir_all(&dir).unwrap();
@@ -298,6 +315,27 @@ mod tests {
         let new = reload_if_changed(&cfg, &sender, &reloader).expect("changed file swaps");
         assert_eq!(new.fps, 90.0);
         assert_eq!(cfg.borrow().fps, 90.0, "the shared config was swapped");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn start_paused_change_applies_to_the_pause_flag() {
+        let dir = tempdir("paused");
+        let path = dir.join("config.toml");
+        fs::write(&path, "[capture]\nstart_paused = false\n").unwrap();
+        let cfg = Rc::new(RefCell::new(Config::load(&path).unwrap()));
+        let sender: Rc<RefCell<Option<WledSender>>> = Rc::new(RefCell::new(None));
+        let reloader = Rc::new(RefCell::new(Reloader::new(Some(path.clone()))));
+        assert!(reload_if_changed(&cfg, &sender, &reloader).is_none());
+        // Different length on purpose: the reload signature is mtime+len.
+        fs::write(&path, "[capture]\nstart_paused = true\n# x\n").unwrap();
+        let new = reload_if_changed(&cfg, &sender, &reloader).expect("changed file swaps");
+        assert!(new.start_paused);
+        assert!(
+            crate::capture::paused(),
+            "the pause flag followed the reload"
+        );
+        crate::capture::set_paused(false);
         fs::remove_dir_all(&dir).unwrap();
     }
 

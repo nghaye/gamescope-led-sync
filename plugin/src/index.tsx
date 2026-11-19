@@ -5,14 +5,12 @@ import {
   type DropdownOption,
   DropdownItem,
   Field,
-  ModalRoot,
   PanelSection,
   PanelSectionRow,
   SliderField,
   staticClasses,
   TextField,
   ToggleField,
-  showModal,
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import { FaLightbulb } from "react-icons/fa";
@@ -21,10 +19,6 @@ import { FaLightbulb } from "react-icons/fa";
 // are called with positional args via the loader/call_plugin_method route.
 const callBackend = <T,>(method: string, ...args: unknown[]): Promise<T> =>
   (callable(method) as (...a: unknown[]) => Promise<T>)(...args);
-
-// The loader serves plugin files under the plugin.json display name
-// (URL-encoded), not under the install folder name.
-const PLUGIN_BASE = `/plugins/${encodeURIComponent(manifest.name)}`;
 
 // The config file schema (SPEC §4.2); CLI-only flags never appear here.
 interface Cfg {
@@ -48,7 +42,7 @@ interface Cfg {
     brightness: number;
   };
   behavior: { on_no_session: string };
-  capture: { node_name: string };
+  capture: { node_name: string; start_paused: boolean };
 }
 
 const DEFAULTS: Cfg = {
@@ -64,29 +58,19 @@ const DEFAULTS: Cfg = {
     brightness: 1.0,
   },
   behavior: { on_no_session: "preset" },
-  capture: { node_name: "gamescope" },
+  capture: { node_name: "gamescope", start_paused: false },
 };
 
+// Full-word labels only — no bl/bc/... codes in the UI.
 const START_OPTIONS: DropdownOption[] = [
-  { label: "Bottom-left corner (bl)", data: "bl" },
-  { label: "Bottom-center (bc)", data: "bc" },
-  { label: "Bottom-right corner (br)", data: "br" },
-  { label: "Right-center (rc)", data: "rc" },
-  { label: "Top-right corner (tr)", data: "tr" },
-  { label: "Top-center (tc)", data: "tc" },
-  { label: "Top-left corner (tl)", data: "tl" },
-  { label: "Left-center (lc)", data: "lc" },
-];
-
-const DIRECTION_OPTIONS: DropdownOption[] = [
-  { label: "Clockwise (viewed from the front)", data: "clockwise" },
-  { label: "Counterclockwise (viewed from the front)", data: "counterclockwise" },
-];
-
-const ON_NO_SESSION_OPTIONS: DropdownOption[] = [
-  { label: "WLED preset after timeout (preset)", data: "preset" },
-  { label: "Keep last colors (keep-last)", data: "keep-last" },
-  { label: "Black (black)", data: "black" },
+  { label: "Bottom-left corner", data: "bl" },
+  { label: "Bottom-center", data: "bc" },
+  { label: "Bottom-right corner", data: "br" },
+  { label: "Right-center", data: "rc" },
+  { label: "Top-right corner", data: "tr" },
+  { label: "Top-center", data: "tc" },
+  { label: "Top-left corner", data: "tl" },
+  { label: "Left-center", data: "lc" },
 ];
 
 interface CaptureStatus {
@@ -105,19 +89,52 @@ interface ServiceStatus {
   enabled: boolean;
 }
 
-// WLED segment length the packet always starts at LED index 0 (SPEC §11).
-function packetLen(l: Cfg["layout"]): number {
-  return l.top + l.right + l.bottom + l.left + Math.max(l.offset, 0);
+interface WledStatus {
+  ok: boolean;
+  configured: boolean;
+  host?: string;
+  reachable: boolean;
+  info?: string | null;
+  error?: string | null;
 }
 
+interface ProbeResult {
+  ok: boolean;
+  info?: string;
+  error?: string;
+}
+
+const sliderNum = (v: unknown): number => {
+  if (typeof v === "number") return v;
+  const target = (v as { target?: { value?: unknown } })?.target;
+  return Number(target?.value);
+};
+
 function Content() {
+  const [mode, setMode] = useState<"main" | "config">("main");
   const [cfg, setCfg] = useState<Cfg>(DEFAULTS);
-  const [status, setStatus] = useState("");
+  const [draft, setDraft] = useState<Cfg | null>(null);
   const [service, setService] = useState<ServiceStatus | null>(null);
   const [capture, setCapture] = useState<CaptureStatus | null>(null);
-  const [lFlash, setLFlash] = useState(false);
-  const prevL = useRef<number | null>(null);
+  const [wled, setWled] = useState<WledStatus | null>(null);
+  const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [configStatus, setConfigStatus] = useState("");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const probeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True when entering the configuration screen paused the capture
+  // ourselves, so only we resume it on exit.
+  const pausedByUs = useRef(false);
+
+  const refreshService = () => {
+    callBackend<ServiceStatus>("service_status").then(setService);
+  };
+  const refreshCapture = () => {
+    callBackend<CaptureStatus>("capture_status").then(setCapture);
+  };
+  const refreshWled = () => {
+    callBackend<WledStatus>("wled_status").then(setWled);
+  };
 
   useEffect(() => {
     callBackend<{ ok: boolean; config?: Cfg }>("get_config").then((res) => {
@@ -125,37 +142,25 @@ function Content() {
     });
     refreshService();
     refreshCapture();
-    // Poll the capture status so the UI tracks session start/end on its own.
-    const t = setInterval(refreshCapture, 5000);
+    refreshWled();
+    // Poll the statuses so the main page tracks session start/end and
+    // WLED reachability on its own.
+    const t = setInterval(() => {
+      refreshService();
+      refreshCapture();
+      refreshWled();
+    }, 5000);
     return () => clearInterval(t);
   }, []);
 
-  const refreshService = () => {
-    callBackend<ServiceStatus>("service_status").then(setService);
-  };
-
-  const refreshCapture = () => {
-    callBackend<CaptureStatus>("capture_status").then(setCapture);
-  };
-
-  // Stop/Start capture toggles the daemon's SIGUSR1 pause; while paused
-  // the configured on_no_session behavior drives the strip.
-  const setCapturePaused = async (paused: boolean) => {
-    const res = await callBackend<{ ok: boolean; error?: string }>("capture_set_paused", paused);
-    if (!res.ok) setStatus(res.error ?? "capture toggle failed");
-    refreshCapture();
-    refreshService();
-  };
-
-  // Every control saves on change, debounced 400 ms; no Apply button —
-  // the daemon applies the file at the next tick (SPEC §10.2/§7).
+  // Main page: every control saves on change, debounced 400 ms; the
+  // daemon applies the file at the next tick, so the effect is immediate
+  // and the value is reloaded at boot (SPEC §10.2/§7).
   const save = (next: Cfg) => {
     setCfg(next);
-    setStatus("saving…");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      const res = await callBackend<{ ok: boolean; errors?: string[] }>("save_config", next);
-      setStatus(res.ok ? "Saved ✓" : (res.errors ?? ["invalid config"]).join("\n"));
+    saveTimer.current = setTimeout(() => {
+      callBackend("save_config", next);
     }, 400);
   };
 
@@ -163,94 +168,122 @@ function Content() {
     save({ ...cfg, [section]: { ...cfg[section], [key]: value } } as Cfg);
   };
 
-  // Numeric text field: parse on change, ignore unparsable input (the
-  // save-time validation reports the bound).
-  const patchNum = <S extends keyof Cfg, K extends keyof Cfg[S]>(section: S, key: K, raw: string) => {
+  // Capture toggle on the main page: SIGUSR1 pause/resume (runtime only;
+  // persistence at boot is the «Capture at startup» switch).
+  const setCapturePaused = async (paused: boolean) => {
+    await callBackend("capture_set_paused", paused);
+    refreshCapture();
+    refreshService();
+  };
+
+  // --- configuration screen -------------------------------------------------
+
+  // Immediate strip preview for a draft change: respawn the backend's
+  // --preview-strip process with the draft layout (debounced so typing a
+  // LED count does not respawn per keystroke). Nothing is written to the
+  // config file here.
+  const previewDraft = (next: Cfg) => {
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(() => {
+      callBackend<{ ok: boolean; errors?: string[] }>(
+        "preview_set",
+        next.wled.host ?? "",
+        next.wled.port,
+        next.wled.timeout_s,
+        next.layout,
+      ).then((res) => {
+        if (!res.ok) setConfigStatus((res.errors ?? ["preview failed"]).join("\n"));
+        else setConfigStatus("");
+      });
+    }, 300);
+  };
+
+  const probeHost = (host: string | null) => {
+    if (probeTimer.current) clearTimeout(probeTimer.current);
+    probeTimer.current = setTimeout(() => {
+      callBackend<ProbeResult>("probe_wled", host ?? "").then(setProbe);
+    }, 600);
+  };
+
+  const enterConfig = async () => {
+    // The preview owns the strip while configuring: pause the capture if
+    // it is running (and remember it, to resume on exit).
+    const st = await callBackend<CaptureStatus>("capture_status");
+    pausedByUs.current = !!st.active && st.state !== "paused";
+    if (pausedByUs.current) await callBackend("capture_set_paused", true);
+    const d = JSON.parse(JSON.stringify(cfg)) as Cfg;
+    setDraft(d);
+    setConfigStatus("");
+    setProbe(null);
+    setMode("config");
+    await callBackend("preview_set", d.wled.host ?? "", d.wled.port, d.wled.timeout_s, d.layout);
+    probeHost(d.wled.host);
+    refreshCapture();
+  };
+
+  const updateDraft = (next: Cfg, hostChanged: boolean) => {
+    setDraft(next);
+    previewDraft(next);
+    if (hostChanged) probeHost(next.wled.host);
+  };
+
+  const patchDraft = <S extends keyof Cfg, K extends keyof Cfg[S]>(section: S, key: K, value: Cfg[S][K]) => {
+    if (!draft) return;
+    updateDraft({ ...draft, [section]: { ...draft[section], [key]: value } } as Cfg, false);
+  };
+
+  const patchDraftNum = <S extends keyof Cfg, K extends keyof Cfg[S]>(
+    section: S,
+    key: K,
+    raw: string,
+  ) => {
     const n = Number(raw);
-    if (raw.trim() !== "" && !Number.isNaN(n)) patch(section, key, n as Cfg[S][K]);
+    if (raw.trim() !== "" && !Number.isNaN(n)) patchDraft(section, key, n as Cfg[S][K]);
   };
 
-  const sliderNum = (v: unknown): number => {
-    if (typeof v === "number") return v;
-    const target = (v as { target?: { value?: unknown } })?.target;
-    return Number(target?.value);
-  };
-
-  // Highlight the packet-length hint whenever L changes (SPEC §10.2/§11).
-  const L = packetLen(cfg.layout);
-  useEffect(() => {
-    if (prevL.current !== null && prevL.current !== L) {
-      setLFlash(true);
-      const t = setTimeout(() => setLFlash(false), 3000);
-      prevL.current = L;
-      return () => clearTimeout(t);
+  const exitConfig = async (saveIt: boolean) => {
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    await callBackend("preview_stop");
+    if (saveIt && draft) {
+      const res = await callBackend<{ ok: boolean; errors?: string[] }>("save_config", draft);
+      if (!res.ok) {
+        setConfigStatus((res.errors ?? ["invalid config"]).join("\n"));
+        return; // stay on the configuration screen
+      }
+      setCfg(draft);
     }
-    prevL.current = L;
-  }, [L]);
-
-  const showLogs = async () => {
-    const res = await callBackend<{ ok: boolean; logs: string }>("get_logs", 200);
-    showModal(
-      <ModalRoot>
-        <pre style={{ maxHeight: "60vh", overflow: "auto", whiteSpace: "pre-wrap" }}>
-          {res.logs || "(no logs)"}
-        </pre>
-      </ModalRoot>,
-    );
-  };
-
-  const testFrame = async () => {
-    const res = await callBackend<{ ok: boolean; error?: string; log?: string }>("test_frame");
-    if (!res.ok) {
-      showModal(
-        <ModalRoot>
-          <div>{res.error ?? "test frame failed"}</div>
-          {res.log ? <pre style={{ whiteSpace: "pre-wrap" }}>{res.log}</pre> : null}
-        </ModalRoot>,
-      );
-      return;
+    if (pausedByUs.current) {
+      await callBackend("capture_set_paused", false);
+      pausedByUs.current = false;
     }
-    showModal(
-      <ModalRoot>
-        <img
-          src={`${PLUGIN_BASE}/data/last-frame.png?ts=${Date.now()}`}
-          alt="last captured frame"
-          style={{ maxWidth: "100%" }}
-        />
-      </ModalRoot>,
-    );
+    setDraft(null);
+    setMode("main");
+    refreshService();
+    refreshCapture();
+    refreshWled();
   };
 
-  const wled = cfg.wled;
-  const layout = cfg.layout;
+  // --- main page ------------------------------------------------------------
+
   const proc = cfg.processing;
+  const captureOn = !!capture?.active && capture.state !== "paused";
 
-  return (
+  const mainPage = (
     <>
-      <PanelSection title="Service">
+      <PanelSection title="Status">
         <PanelSectionRow>
-          <ToggleField
-            label="Enabled at boot"
-            checked={service?.enabled ?? false}
-            onChange={async (checked: boolean) => {
-              await callBackend("service_set_enabled", checked);
-              refreshService();
-            }}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <Field label="Status" description={service ? `${service.ActiveState} (${service.SubState})` : "…"}>
+          <Field
+            label="Service"
+            description={service ? `enabled at boot: ${service.enabled ? "yes" : "no"}` : "…"}
+          >
             {service ? `${service.ActiveState} / ${service.SubState}` : "unknown"}
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
-          <Field
-            label="Capture"
-            description={capture?.detail || "…"}
-          >
+          <Field label="Capture" description={capture?.detail || "…"}>
             {capture
               ? capture.state === "capturing"
-                ? `capturing${capture.fps != null ? ` (${capture.fps.toFixed(1)} fps)` : ""}`
+                ? "capturing"
                 : capture.state === "paused"
                   ? "paused"
                   : capture.state === "waiting"
@@ -260,133 +293,48 @@ function Content() {
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            disabled={capture?.state === "paused" || capture?.active === false}
-            onClick={() => setCapturePaused(true)}
-          >
-            Stop capture
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            disabled={capture?.state !== "paused"}
-            onClick={() => setCapturePaused(false)}
-          >
-            Start capture
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => callBackend("service_start").then(refreshService)}>
-            Start
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => callBackend("service_stop").then(refreshService)}>
-            Stop
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => callBackend("service_restart").then(refreshService)}>
-            Restart
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={showLogs}>
-            View logs
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={testFrame}>
-            Test one frame
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
-
-      <PanelSection title="WLED">
-        <PanelSectionRow>
-          <TextField
-            label="Host"
-            value={wled.host ?? ""}
-            onChange={(e) => patch("wled", "host", e.target.value || null)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField
-            label="UDP realtime port (1–65535)"
-            value={String(wled.port)}
-            onChange={(e) => patchNum("wled", "port", e.target.value)}
-          />
-        </PanelSectionRow>
-      </PanelSection>
-
-      <PanelSection title="LED strip">
-        <PanelSectionRow>
-          <TextField label="Top (0–490)" value={String(layout.top)} onChange={(e) => patchNum("layout", "top", e.target.value)} />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField label="Right (0–490)" value={String(layout.right)} onChange={(e) => patchNum("layout", "right", e.target.value)} />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField label="Bottom (0–490)" value={String(layout.bottom)} onChange={(e) => patchNum("layout", "bottom", e.target.value)} />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField label="Left (0–490)" value={String(layout.left)} onChange={(e) => patchNum("layout", "left", e.target.value)} />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <Field
-            label="Total LEDs (read-only)"
-            description="count = top + right + bottom + left, recomputed live"
-          >
-            {layout.top + layout.right + layout.bottom + layout.left}
+          <Field label="FPS" description="live capture rate">
+            {capture?.fps != null ? capture.fps.toFixed(1) : "—"}
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
-          <DropdownItem
-            label="Start point"
-            rgOptions={START_OPTIONS}
-            selectedOption={START_OPTIONS.find((o) => o.data === layout.start) ?? START_OPTIONS[0]}
-            onChange={(item) => patch("layout", "start", item.data as string)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <DropdownItem
-            label="Direction"
-            rgOptions={DIRECTION_OPTIONS}
-            selectedOption={DIRECTION_OPTIONS.find((o) => o.data === layout.direction) ?? DIRECTION_OPTIONS[0]}
-            onChange={(item) => patch("layout", "direction", item.data as string)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <SliderField
-            label={`Offset (${layout.offset})`}
-            min={-30}
-            max={30}
-            step={1}
-            value={layout.offset}
-            onChange={(v) => patch("layout", "offset", Math.round(sliderNum(v)))}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
           <Field
-            label="WLED segment length"
-            description={`Set your WLED segment length to L = ${L} (SPEC §11)`}
+            label="WLED strip"
+            description={wled?.configured ? `host ${wled.host}: ${wled.info ?? wled.error ?? ""}` : "no host configured"}
           >
-            <span style={lFlash ? { color: "#ffd75f" } : undefined}>L = {L}</span>
+            {wled ? (wled.configured ? (wled.reachable ? "reachable" : "not reachable") : "not configured") : "…"}
           </Field>
+        </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title="Capture">
+        <PanelSectionRow>
+          <ToggleField
+            label="Capture"
+            checked={captureOn}
+            disabled={!capture?.active}
+            onChange={(on) => setCapturePaused(!on)}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ToggleField
+            label="Capture at startup"
+            description="saved in the config file; applied immediately on change"
+            checked={!cfg.capture.start_paused}
+            onChange={(on) => patch("capture", "start_paused", !on)}
+          />
         </PanelSectionRow>
       </PanelSection>
 
       <PanelSection title="Image">
         <PanelSectionRow>
           <SliderField
-            label={`Saturation (${proc.saturation.toFixed(2)})`}
+            label={`Brightness (${Math.round(proc.brightness * 100)} %)`}
             min={0}
-            max={3}
-            step={0.05}
-            value={proc.saturation}
-            onChange={(v) => patch("processing", "saturation", sliderNum(v))}
+            max={1}
+            step={0.01}
+            value={proc.brightness}
+            onChange={(v) => patch("processing", "brightness", sliderNum(v))}
           />
         </PanelSectionRow>
         <PanelSectionRow>
@@ -401,22 +349,12 @@ function Content() {
         </PanelSectionRow>
         <PanelSectionRow>
           <SliderField
-            label={`Brightness (${Math.round(proc.brightness * 100)} %)`}
+            label={`Saturation (${proc.saturation.toFixed(2)})`}
             min={0}
-            max={1}
-            step={0.01}
-            value={proc.brightness}
-            onChange={(v) => patch("processing", "brightness", sliderNum(v))}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <SliderField
-            label={`Band (${Math.round(proc.band_frac * 100)} %)`}
-            min={0.02}
-            max={0.2}
-            step={0.01}
-            value={proc.band_frac}
-            onChange={(v) => patch("processing", "band_frac", sliderNum(v))}
+            max={3}
+            step={0.05}
+            value={proc.saturation}
+            onChange={(v) => patch("processing", "saturation", sliderNum(v))}
           />
         </PanelSectionRow>
         <PanelSectionRow>
@@ -429,40 +367,154 @@ function Content() {
             onChange={(v) => patch("processing", "smooth", sliderNum(v))}
           />
         </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title="Configuration">
         <PanelSectionRow>
-          <TextField label="FPS (10–60)" value={String(proc.fps)} onChange={(e) => patchNum("processing", "fps", e.target.value)} />
+          <ButtonItem layout="below" onClick={enterConfig}>
+            Configuration
+          </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
+    </>
+  );
+
+  // --- configuration screen -------------------------------------------------
+
+  const configPage = draft && (
+    <>
+      <PanelSection title="WLED">
+        <PanelSectionRow>
+          <TextField
+            label="WLED host or IP"
+            value={draft.wled.host ?? ""}
+            onChange={(e) => {
+              const host = e.target.value || null;
+              updateDraft({ ...draft, wled: { ...draft.wled, host } }, true);
+            }}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <Field label="Host check" description="HTTP GET /json/info on port 80">
+            {probe === null ? (
+              "…"
+            ) : probe.ok ? (
+              <span style={{ color: "#4caf50" }}>OK — {probe.info}</span>
+            ) : (
+              <span style={{ color: "#f44336" }}>NOK — {probe.error}</span>
+            )}
+          </Field>
+        </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title="LED strip">
+        <PanelSectionRow>
+          <DropdownItem
+            label="Start point"
+            rgOptions={START_OPTIONS}
+            selectedOption={START_OPTIONS.find((o) => o.data === draft.layout.start) ?? START_OPTIONS[0]}
+            onChange={(item) => patchDraft("layout", "start", item.data as string)}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ToggleField
+            label="Clockwise rotation"
+            description="off = counterclockwise (viewed from the front)"
+            checked={draft.layout.direction === "clockwise"}
+            onChange={(on) => patchDraft("layout", "direction", on ? "clockwise" : "counterclockwise")}
+          />
         </PanelSectionRow>
         <PanelSectionRow>
           <TextField
-            label="Advanced: sample height (120–480)"
-            value={String(proc.sample_height)}
-            onChange={(e) => patchNum("processing", "sample_height", e.target.value)}
+            label="LEDs on the bottom segment"
+            value={String(draft.layout.bottom)}
+            onChange={(e) => patchDraftNum("layout", "bottom", e.target.value)}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <TextField
+            label="LEDs on the left segment"
+            value={String(draft.layout.left)}
+            onChange={(e) => patchDraftNum("layout", "left", e.target.value)}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <TextField
+            label="LEDs on the top segment"
+            value={String(draft.layout.top)}
+            onChange={(e) => patchDraftNum("layout", "top", e.target.value)}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <TextField
+            label="LEDs on the right segment"
+            value={String(draft.layout.right)}
+            onChange={(e) => patchDraftNum("layout", "right", e.target.value)}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <Field
+            label="Total active LEDs"
+            description={`${draft.layout.top} + ${draft.layout.right} + ${draft.layout.bottom} + ${draft.layout.left}`}
+          >
+            {draft.layout.top + draft.layout.right + draft.layout.bottom + draft.layout.left}
+          </Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <SliderField
+            label={`Offset (${draft.layout.offset})`}
+            min={-20}
+            max={20}
+            step={1}
+            value={draft.layout.offset}
+            onChange={(v) => patchDraft("layout", "offset", Math.round(sliderNum(v)))}
           />
         </PanelSectionRow>
       </PanelSection>
 
-      <PanelSection title="Behavior">
+      <PanelSection title="Capture">
         <PanelSectionRow>
-          <DropdownItem
-            label="When no gamescope session is active"
-            rgOptions={ON_NO_SESSION_OPTIONS}
-            selectedOption={
-              ON_NO_SESSION_OPTIONS.find((o) => o.data === cfg.behavior.on_no_session) ?? ON_NO_SESSION_OPTIONS[0]
-            }
-            onChange={(item) => patch("behavior", "on_no_session", item.data as string)}
+          <SliderField
+            label={`Screen band (${Math.round(draft.processing.band_frac * 100)} %)`}
+            min={0.01}
+            max={0.2}
+            step={0.01}
+            value={draft.processing.band_frac}
+            onChange={(v) => patchDraft("processing", "band_frac", sliderNum(v))}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <TextField
+            label="FPS"
+            value={String(draft.processing.fps)}
+            onChange={(e) => patchDraftNum("processing", "fps", e.target.value)}
           />
         </PanelSectionRow>
       </PanelSection>
 
       <PanelSection title="Save">
+        {configStatus !== "" && (
+          <PanelSectionRow>
+            <Field label="Status">
+              <span style={{ whiteSpace: "pre-wrap", color: "#f44336" }}>{configStatus}</span>
+            </Field>
+          </PanelSectionRow>
+        )}
         <PanelSectionRow>
-          <Field label="Status" description="Changes save automatically (400 ms debounce); the daemon applies them at the next tick">
-            <span style={{ whiteSpace: "pre-wrap" }}>{status}</span>
-          </Field>
+          <ButtonItem layout="below" onClick={() => exitConfig(true)}>
+            Save and quit
+          </ButtonItem>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => exitConfig(false)}>
+            Cancel
+          </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
     </>
   );
+
+  return mode === "config" ? configPage : mainPage;
 }
 
 export default definePlugin(() => ({

@@ -65,3 +65,8 @@ on_no_session = "preset"
 # media.name of the gamescope PipeWire node; advanced, file-only escape
 # hatch if your setup names the node differently.
 node_name = "gamescope"
+# Start with the capture paused (the Decky plugin's «Capture at startup»
+# switch). true: the daemon starts paused and the no-session behavior
+# applies until the capture is resumed (Decky UI or SIGUSR1). A change
+# of this key also applies immediately on live reload.
+start_paused = false
