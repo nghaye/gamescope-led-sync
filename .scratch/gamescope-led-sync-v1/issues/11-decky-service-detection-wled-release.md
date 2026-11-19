@@ -37,7 +37,7 @@
   line now reads «capture paused (SIGUSR1); WLED released, no packets while
   paused» (the `capture paused` prefix the plugin parses is unchanged).
 
-**Status:** done (commit pending on main)
+**Status:** done (commit 1dbad3b on main)
 
 - [x] Backend env fix + `error` surfacing; frontend Service field shows it
 - [x] Rust: paused ⇒ no packets, unit test `paused_releases_the_wled_regardless_of_on_no_session`
@@ -50,6 +50,6 @@
   clean, fmt clean on touched files; plugin `npm run build` + `check` green
 - [x] Docs: SPEC D5/§6.1/§6.2/§10.1, README.md, plugin/README.md,
   deploy/config.toml.example
-- [ ] Deploy the new daemon binary: `./deploy/install.sh` (sudo) then
+- [x] Deploy the new daemon binary: `./deploy/install.sh` (sudo) then
   `systemctl --user restart gamescope-led-sync` — the plugin itself is already
-  reinstalled (`./plugin/install.sh --build`)
+  reinstalled (`./plugin/install.sh --build`) and verified live
