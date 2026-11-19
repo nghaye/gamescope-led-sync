@@ -55,7 +55,7 @@
 3. Frontend `index.tsx`: two views as above.
 4. Docs: SPEC §4.2/§4.3/§6.2/§7/§10 + D11, README, plugin README, config example.
 
-**Status:** implemented (see closing commit)
+**Status:** done (commit 26402cd on main)
 
 - [x] Rust: `[capture] start_paused` (config.rs/cli.rs `‑‑start-paused`, reload.rs applies the
   pause flag on change, capture.rs `set_paused`, main.rs startup pause) + `--preview-strip`
