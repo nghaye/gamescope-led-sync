@@ -81,7 +81,8 @@ struct Cli {
     #[arg(long, value_parser = Direction::CODES, default_value = "clockwise")]
     direction: String,
 
-    /// LED offset: positive sends that many black LEDs first, negative rotates
+    /// Circular shift of the whole strip (loop: the last LED is next to the
+    /// first); positive shifts toward higher LED indices, negative toward lower
     #[arg(long, value_name = "N", default_value_t = 0)]
     offset: i32,
 
@@ -359,11 +360,12 @@ mod tests {
 
     #[test]
     fn cli_layout_error_surfaces_from_merge() {
-        // count = 489 with offset = 2 -> packet length 491 > 490.
+        // count = 491 exceeds one DRGB packet, whatever the offset: the
+        // offset is a circular shift and never lengthens the packet.
         let (cli, matches) = cli_from(&[
             "gamescope-led-sync",
             "--top",
-            "489",
+            "491",
             "--right",
             "0",
             "--bottom",

@@ -39,7 +39,8 @@ the preview; «Cancel» leaves the screen without saving.
 Fields: WLED host/IP with a green **OK** / red **NOK** reachability indicator
 (probed on change), start point (8 full-word options, no codes), clockwise
 rotation switch (off = counterclockwise), the four segment LED counts with a
-live **total active LEDs** line, the offset slider (−20 … +20, step 1), the
+live **total active LEDs** line, the offset slider (−20 … +20, step 1 — a
+circular shift of the whole strip, the last LED being next to the first), the
 screen band slider (1–20 %), and FPS.
 
 «Save and quit» validates and writes the draft through `save_config`

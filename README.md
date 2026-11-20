@@ -53,7 +53,7 @@ Value precedence: **CLI flag > config file > built-in default**. The daemon stat
 | `[layout]`    | `top/right/bottom/left` | `132/75/132/75` | `0..=490` each, `count ≥ 1`      |
 |               | `start`         | `"bl"`        | `bl bc br rc tr tc tl lc`              |
 |               | `direction`     | `"clockwise"` | `clockwise\|counterclockwise`          |
-|               | `offset`        | `0`           | packet length `count + max(offset,0) ≤ 490` |
+|               | `offset`        | `0`           | integer; circular shift, packet length stays `count ≤ 490` |
 | `[processing]`| `fps`           | `30`          | `1..=240`                              |
 |               | `sample_height` | `240`         | `1..=16384`                            |
 |               | `band_frac`     | `0.08`        | `> 0 and < 1`                          |
@@ -86,16 +86,16 @@ The daemon waits for the gamescope node (reconnect loop), so starting it at boot
 
 The perimeter is a cyclic list of `count = top+right+bottom+left` zones. The strip's first LED sits at one of **8 start points** (4 corners `bl tl tr br` + 4 edge midpoints `lc tc rc bc`) and runs in the chosen **direction** (`clockwise`/`counterclockwise`, viewed from the front) — 16 combinations.
 
-**Offset**: `offset > 0` sends the first `offset` physical LEDs as black (packet length `L = count + offset`); `offset < 0` rotates the chain (LED `i` gets zone `(i + |offset|) mod count`). Constraint: `L ≤ 490`.
+**Offset**: the strip is a **loop** — the last LED is physically next to the first — so `offset` is a circular shift of the whole strip: LED `i` gets zone `chain[(i − offset) mod count]`. `offset > 0` shifts the image toward higher LED indices (right along the strip), `offset < 0` toward lower indices (left), wrapping around the loop. The packet length is always `count` (≤ 490), whatever the offset — so changing it, sign included, can never break the WLED stream.
 
-**WLED segment-length rule**: the packet always starts at WLED LED index 0, so set your WLED segment length to `L = count + max(offset, 0)` (e.g. 268 for the 65" strip). A positive offset is sent as leading black LEDs.
+**WLED segment-length rule**: the packet always starts at WLED LED index 0 and always carries the whole chain, so set your WLED segment length to `count` (e.g. 268 for the 65" strip). The offset only shifts the colors circularly within that segment.
 
 ## Decky plugin
 
 `plugin/` is a [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin (no root flag; runs as the session user) with two pages:
 
 - **Main page**: status lines (service, capture, live FPS, WLED strip reachability — polled every 5 s), a **Capture** switch (SIGUSR1 pause/resume; while paused nothing is sent and the WLED is released), a **Capture at startup** switch (`[capture] start_paused`, persisted in the config file and applied immediately on change), the **Brightness / Gamma / Saturation / Smooth** sliders, and a **Configuration** button. Sliders and switches save on change (debounced 400 ms) and go live at the daemon's next tick, and are reloaded at boot.
-- **Configuration screen**: entering it pauses the capture (resumed on exit) and lights each of the 4 strip segments in its own color (bottom red, left blue, top green, right yellow) via the daemon's `--preview-strip` mode; every change is previewed live on the strip but **written to the config file only on «Save and quit»** («Cancel» leaves without saving). Fields: WLED host/IP with a green OK / red NOK reachability check, start point (8 full-word options), clockwise rotation switch, per-segment LED counts with a live total, offset slider (−20…+20), screen band slider (1–20 %), FPS.
+- **Configuration screen**: entering it pauses the capture (resumed on exit) and lights each of the 4 strip segments in its own color (bottom red, left blue, top green, right yellow) via the daemon's `--preview-strip` mode; every change is previewed live on the strip but **written to the config file only on «Save and quit»** («Cancel» leaves without saving). Fields: WLED host/IP with a green OK / red NOK reachability check, start point (8 full-word options), clockwise rotation switch, per-segment LED counts with a live total, offset slider (−20…+20, circular shift of the loop), screen band slider (1–20 %), FPS.
 
 `wled.timeout_s`, `wled.port`, `sample_height`, `behavior.on_no_session` and `capture.node_name` stay file-only. `deploy/install.sh` does **not** install the plugin — run `./plugin/install.sh` once as the normal user (no sudo: it installs through Decky Loader's local API; `--direct` falls back to a sudo copy + loader restart). See [plugin/README.md](./plugin/README.md).
 

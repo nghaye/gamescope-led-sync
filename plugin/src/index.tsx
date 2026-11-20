@@ -470,6 +470,7 @@ function Content() {
         <PanelSectionRow>
           <SliderField
             label={`Offset (${draft.layout.offset})`}
+            description="Circular shift of the whole strip (the last LED is next to the first): + shifts right, − shifts left"
             min={-20}
             max={20}
             step={1}

@@ -19,7 +19,7 @@ port      = 21324
 timeout_s = 2
 
 [layout]
-# LED count per edge, 0..490 each, sum >= 1 and sum + max(offset, 0) <= 490.
+# LED count per edge, 0..490 each, sum >= 1 and sum <= 490 (one DRGB packet).
 # The values below are the owner's 65" TV strip (~268 LEDs at 60/m).
 top    = 86
 right  = 48
@@ -32,8 +32,11 @@ start = "bc"
 # Strip direction from the start point, viewed from the front:
 # clockwise|counterclockwise.
 direction = "clockwise"
-# LED offset. offset > 0: the first `offset` physical LEDs are sent black
-# (packet length = count + offset). offset < 0: the chain is rotated.
+# Circular shift of the whole strip: the strip is a loop (the last LED is
+# next to the first), and LED i gets chain[(i - offset) mod count].
+# offset > 0 shifts toward higher LED indices (right along the strip),
+# offset < 0 toward lower ones (left), wrapping around. The packet length
+# always stays count.
 offset = 0
 
 [processing]

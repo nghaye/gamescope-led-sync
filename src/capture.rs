@@ -594,9 +594,9 @@ pub fn run(
                     c.gamma,
                     c.brightness,
                 );
-                // The DRGB packet is the graded chain with the offset
-                // applied (black head or rotation), so WLED's segment
-                // sees packet_len LEDs starting at index 0.
+                // The DRGB packet is the graded chain with the circular
+                // offset applied, so WLED's segment sees the count LEDs
+                // starting at index 0.
                 let colors = apply_offset(&graded, &c.layout);
                 st.proc += t0.elapsed();
 

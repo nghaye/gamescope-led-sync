@@ -21,7 +21,7 @@ scope for v1 (§15).
 
 | # | Question | Decision |
 | - | -------- | -------- |
-| D1 | Offset semantics | `offset > 0`: the first `offset` physical LEDs are sent **black** (the «void at the start»), packet length = `offset + count`. `offset < 0`: rotation, LED `i` gets zone `(i + \|offset\|) mod count`. Constraint: `count + max(offset,0) ≤ 490`. |
+| D1 | Offset semantics | The strip is a **loop** (the last LED is physically next to the first): `offset` is a **circular shift** of the whole strip, LED `i` gets zone `chain[(i − offset) mod count]`. `offset > 0` shifts toward higher LED indices (right along the strip), `offset < 0` toward lower ones (left), wrapping around. Packet length = `count` always (≤ 490), so the offset — sign change included — never alters the packet length and cannot break the WLED realtime stream. |
 | D2 | LED count / protocol cap | ≈ 270 LEDs (60/m). **490 max** (one DRGB packet) is a documented v1 constraint. DNRGB (>490, multi-packet) is out of scope v1. |
 | D3 | Start points | **8 start points** `bl bc br rc tr tc tl lc` (4 corners + 4 edge midpoints) × `direction` ∈ {`clockwise`, `counterclockwise`} viewed from the front = 16 combinations, unit-tested. |
 | D4 | Boot/session | SDDM + autologin → `systemd --user` available → user unit `gamescope-led-sync.service`, `WantedBy=default.target`. |
@@ -90,7 +90,7 @@ bottom = 86
 left = 48
 start = "bc"            # bl|bc|br|rc|tr|tc|tl|lc
 direction = "clockwise" # clockwise|counterclockwise (viewed from the front)
-offset = 0              # integer; packet length = count + max(offset,0) <= 490
+offset = 0              # integer; circular shift of the strip loop, packet length stays count <= 490
 
 [processing]
 fps = 30                # 1..240 (UI: 10..60)
@@ -115,7 +115,7 @@ key will be introduced when the schema evolves.
 ### 4.3 Validation (shared by CLI and file)
 
 One `Config::validate()` used by both entry points. Rules: every bound above;
-`count = top+right+bottom+left ≥ 1`; `count + max(offset, 0) ≤ 490`; `start` and
+`count = top+right+bottom+left ≥ 1` and `≤ 490`; `start` and
 `direction` and `on_no_session` must be known codes; a midpoint `start` on an
 edge with 0 LEDs is rejected (§5.2); **unknown TOML keys are a
 hard error** (`deny_unknown_fields`) so typos cannot pass silently. Errors name
@@ -195,19 +195,21 @@ empty adjacent edge it degenerates to the next edge in rotation order).
 
 ### 5.3 Offset (D1)
 
-`packet_length L = count + max(offset, 0)`, with `L ≤ 490` validated.
-For `i in 0..L`:
-
-- if `offset > 0` and `i < offset`: black `[0,0,0]`;
-- else: `chain[(i - offset) rem_euclid count]`.
+The strip is a **loop**: the last LED is physically next to the first, so the
+offset is a circular shift of the whole strip, whatever its sign. For
+`i in 0..count`: `packet[i] = chain[(i - offset) rem_euclid count]`.
+`offset > 0` shifts the image toward higher LED indices (right along the
+strip), `offset < 0` toward lower indices (left), wrapping around the loop.
+The packet length is always `count` (validated `≤ 490`), so the offset never
+changes it.
 
 `chain()` returns the `count` zones; a separate `apply_offset()` builds the
-final packet (black head + rotated chain). Both unit-tested (offset 0, +5, −5,
-boundary `L = 490`, `L = 491` rejected).
+final packet (the circularly shifted chain). Both unit-tested (offset 0, +n,
+−n, `|offset| > count` wraps, `count = 490` ok, `491` rejected).
 
 ### 5.4 Color grading order
 
-Per LED, on the chain **before** offset padding: saturation gain → gamma →
+Per LED, on the chain **before** the circular offset: saturation gain → gamma →
 `× brightness` → clamp 0..255 → u8. All no-ops at defaults (1.0 / 1.0 / 1.0).
 Smoothing (EMA, `p += smooth·(n−p)` per channel) runs on the chain and resets
 when `count` changes (existing length check).
@@ -436,8 +438,9 @@ One `Content` component with `mode: "main" | "config"`.
 ## 11. WLED prerequisites (documented in README)
 
 - UDP realtime enabled, protocol **DRGB**, port 21324 (or as configured).
-- Segment length = `L = count + max(offset, 0)` (e.g. 268) — the packet always
-  starts at WLED LED index 0; a positive offset is sent as leading black LEDs.
+- Segment length = `count` (e.g. 268) — the packet always starts at WLED LED
+  index 0 and always carries the whole chain; the offset only shifts it
+  circularly within the segment.
 - PC and WLED on the same LAN; `wled.local` resolvable (mDNS) or use an IP.
 
 ## 12. Tests
@@ -445,14 +448,15 @@ One `Content` component with `mode: "main" | "config"`.
 - Existing `geometry.rs` / `output.rs` unit tests kept; corner tests ported to
   `StartPoint` and used as the regression baseline for the 16 combos.
 - New: 16-combination start×direction truth table (against the §5.2 index
-  table); midpoint split semantics; offset cases (0, +n, −n, `L=490` ok,
-  `L=491` rejected); grading order incl. brightness; DRGB packet with black
-  head; config TOML parse/validate (one test per error class); CLI>file>default
-  merge precedence; reload apply (valid swap / invalid keeps old);
+  table); midpoint split semantics; offset cases (0, +n, −n, wrap-around
+  `|offset| > count`, `count=490` ok, `491` rejected); grading order incl.
+  brightness; config TOML parse/validate (one test per error class);
+  CLI>file>default merge precedence; reload apply (valid swap / invalid keeps
+  old);
   ticket 10: `[capture] start_paused` (file parse, `--start-paused` override,
   reload applies the pause flag on change) and the `--preview-strip`
   segment pattern (bottom red / left blue / top green / right yellow through
-  `chain` + `apply_offset`, incl. midpoint start and black-head offset).
+  `chain` + `apply_offset`, incl. midpoint start and circular offset).
 - `--dump` / `--preview` grade with saturation + gamma + brightness, so the
   diagnostics match the LED output exactly.
 - New files must pass the existing `just` recipes (markdownlint on SPEC.md and
@@ -512,8 +516,9 @@ are now locked where indicated:
    `sample_height` live for the step, at next reconnect for `requested_size` (§7).
 7. `test_frame` while the service is active → refused (two capture clients on
    one gamescope node are unsupported) (§6.0, §10.1).
-8. WLED segment-length hint: the plugin shows `L = count + max(offset,0)` and
-   highlights it when it changes (§10.2, §11).
+8. WLED segment-length hint: the plugin shows `L = count` (the offset is a
+   circular shift, so the packet length never changes) and highlights it when
+   it changes (§10.2, §11).
 9. `--dump`/`--preview` grade with saturation + gamma + brightness (§12).
 10. No config schema-version key in v1; unknown keys are hard errors (§4.2).
 11. `[capture] node_name = "gamescope"` added as an advanced, file-only escape

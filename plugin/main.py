@@ -220,8 +220,10 @@ def validate(cfg):
     if start_paused is not None and not isinstance(start_paused, bool):
         _err(errors, "capture.start_paused", start_paused, "a boolean")
 
-    # Layout rules (SPEC §4.3/§5.2): count >= 1, packet length <= 490,
-    # and a midpoint start needs its edge to have at least 1 LED.
+    # Layout rules (SPEC §4.3/§5.2): count >= 1 and <= 490 (one DRGB
+    # packet; the offset is a circular shift of the loop and never
+    # lengthens the packet), and a midpoint start needs its edge to
+    # have at least 1 LED.
     edges = {e: layout.get(e, DEFAULTS["layout"][e]) for e in ("top", "right", "bottom", "left")}
     if all(isinstance(v, int) for v in edges.values()):
         count = sum(edges.values())
@@ -229,9 +231,6 @@ def validate(cfg):
             _err(errors, "layout", count, "count >= 1")
         elif count > 490:
             _err(errors, "layout", count, "<= 490 (one DRGB packet)")
-        offset = layout.get("offset", DEFAULTS["layout"]["offset"])
-        if isinstance(offset, int) and count + max(offset, 0) > 490:
-            _err(errors, "layout.offset", offset, f"packet length {count + max(offset, 0)} <= 490")
         start = layout.get("start", DEFAULTS["layout"]["start"])
         midpoint_edge = {"lc": "left", "tc": "top", "rc": "right", "bc": "bottom"}.get(start)
         if midpoint_edge and edges[midpoint_edge] < 1:
@@ -498,7 +497,9 @@ class Plugin:
             _preview_proc = None
             return {"ok": False, "errors": [f"could not spawn {BINARY}: {e}"]}
         l = merged["layout"]
-        return {"ok": True, "packet_len": sum(l[e] for e in ("top", "right", "bottom", "left")) + max(l["offset"], 0)}
+        # The offset is a circular shift: the packet always carries the
+        # whole chain, so packet_len = count.
+        return {"ok": True, "packet_len": sum(l[e] for e in ("top", "right", "bottom", "left"))}
 
     async def preview_stop(self):
         """Stop the strip preview (leaving the configuration screen)."""

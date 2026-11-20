@@ -94,12 +94,15 @@ mod tests {
     }
 
     #[test]
-    fn pattern_applies_a_positive_offset_as_a_black_head() {
+    fn pattern_applies_the_offset_as_a_circular_shift() {
+        // base chain (clockwise from bl) = [blue, blue, green, green,
+        // yellow, yellow, red, red]; offset +2 shifts it two LEDs
+        // forward along the loop, so red wraps to the head.
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 2).unwrap();
+        let (red, green, blue, yellow) = ([255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]);
         let p = segment_pattern(&l);
-        assert_eq!(p.len(), 10, "packet length = count + offset");
-        assert_eq!(&p[..2], &[[0, 0, 0], [0, 0, 0]]);
-        assert_eq!(&p[2..4], &[[0, 0, 255], [0, 0, 255]], "left = blue");
+        assert_eq!(p.len(), 8, "packet length = count, the offset only shifts");
+        assert_eq!(p, vec![red, red, blue, blue, green, green, yellow, yellow]);
     }
 
     #[test]

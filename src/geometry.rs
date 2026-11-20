@@ -81,15 +81,13 @@ pub enum LayoutError {
     ZeroLeds,
     #[error("{count} LEDs exceed one DRGB packet (490)")]
     TooManyLeds { count: usize },
-    #[error("packet length {len} exceeds one DRGB packet (490)")]
-    PacketTooLong { len: usize },
     #[error("start {start} is a midpoint and needs its edge to have at least 1 LED")]
     MidpointOnEmptyEdge { start: &'static str },
 }
 
 /// LED counts per edge plus the strip's physical orientation. A Layout
-/// only exists if its packet (chain plus a positive offset's leading
-/// black LEDs) fits one DRGB packet (490 LEDs).
+/// only exists if the chain fits one DRGB packet (490 LEDs); the offset
+/// is a circular shift of the loop and never changes the packet length.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     top: usize,
@@ -117,10 +115,6 @@ impl Layout {
         }
         if count > 490 {
             return Err(LayoutError::TooManyLeds { count });
-        }
-        let len = count + offset.max(0) as usize;
-        if len > 490 {
-            return Err(LayoutError::PacketTooLong { len });
         }
         // A midpoint start on an edge with no LEDs is meaningless; a
         // corner start degenerates to the next edge in rotation order.
@@ -181,10 +175,11 @@ impl Layout {
         self.top + self.right + self.bottom + self.left
     }
 
-    /// LEDs in the DRGB packet: the chain plus a positive offset's
-    /// leading black LEDs.
+    /// LEDs in the DRGB packet: always the whole chain. The strip is a
+    /// loop (the last LED sits next to the first), so the offset only
+    /// shifts it circularly and never lengthens the packet.
     pub fn packet_len(&self) -> usize {
-        self.count() + self.offset.max(0) as usize
+        self.count()
     }
 
     /// The one-line layout summary, logged at startup and again on a
@@ -348,23 +343,21 @@ pub fn chain(e: &EdgeColors, l: &Layout) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// Build the DRGB packet from the chain: a positive offset pads the
-/// head with black LEDs (packet length = count + offset), a negative
-/// offset rotates the chain. Works on zones ([f32; 3]) or on graded
-/// colors ([u8; 3]); black is the color type's default.
-pub fn apply_offset<T: Copy + Default>(chained: &[T], l: &Layout) -> Vec<T> {
+/// Build the DRGB packet from the chain. The strip is a loop — the last
+/// LED is physically next to the first — so the offset is a circular
+/// shift of the whole strip, whatever its sign: LED `i` gets
+/// `chain[(i - offset) rem_euclid count]`. A positive offset shifts the
+/// image toward higher LED indices (right along the strip), a negative
+/// one toward lower indices (left), wrapping around the loop. The packet
+/// always has `count` LEDs, so the offset — including a sign change —
+/// never alters its length. Works on zones ([f32; 3]) or on graded
+/// colors ([u8; 3]).
+pub fn apply_offset<T: Copy>(chained: &[T], l: &Layout) -> Vec<T> {
     let count = l.count();
     let offset = l.offset() as isize;
     debug_assert_eq!(chained.len(), count);
-    (0..l.packet_len())
-        .map(|i| {
-            let i = i as isize;
-            if offset > 0 && i < offset {
-                T::default()
-            } else {
-                chained[(i - offset).rem_euclid(count as isize) as usize]
-            }
-        })
+    (0..count)
+        .map(|i| chained[(i as isize - offset).rem_euclid(count as isize) as usize])
         .collect()
 }
 
@@ -554,15 +547,16 @@ mod tests {
     }
 
     #[test]
-    fn layout_counts_a_positive_offset_in_the_packet_length() {
-        // Packet length L = count + max(offset, 0), still capped at 490.
-        assert!(Layout::new(489, 0, 0, 0, StartPoint::Bl, Direction::Clockwise, 1).is_ok()); // L=490
-        assert!(Layout::new(460, 0, 0, 0, StartPoint::Bl, Direction::Clockwise, 30).is_ok()); // L=490
-        assert!(Layout::new(490, 0, 0, 0, StartPoint::Bl, Direction::Clockwise, 1).is_err()); // L=491
-        assert!(Layout::new(461, 0, 0, 0, StartPoint::Bl, Direction::Clockwise, 30).is_err()); // L=491
-        // A negative offset rotates, it does not lengthen the packet.
-        let l = Layout::new(490, 0, 0, 0, StartPoint::Bl, Direction::Clockwise, -30).unwrap();
-        assert_eq!(l.packet_len(), 490);
+    fn offset_never_changes_the_packet_length() {
+        // The strip is a loop: the offset is a circular shift, so the
+        // packet always carries the whole chain and only the count is
+        // capped at 490.
+        for offset in [-30, -1, 0, 1, 30] {
+            let l =
+                Layout::new(490, 0, 0, 0, StartPoint::Bl, Direction::Clockwise, offset).unwrap();
+            assert_eq!(l.packet_len(), 490, "offset {offset}");
+        }
+        assert!(Layout::new(489, 0, 0, 0, StartPoint::Bl, Direction::Clockwise, 30).is_ok());
         assert!(Layout::new(491, 0, 0, 0, StartPoint::Bl, Direction::Clockwise, -30).is_err());
     }
 
@@ -922,17 +916,20 @@ mod tests {
     }
 
     #[test]
-    fn positive_offset_pads_the_head_with_black() {
+    fn positive_offset_shifts_the_chain_toward_higher_indices() {
+        // packet[i] = chain[(i - offset) mod count]: +3 moves the image
+        // three LEDs forward along the strip, wrapping around the loop.
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 3).unwrap();
         let c = chain8();
         let got = apply_offset(&c, &l);
-        assert_eq!(got.len(), 8 + 3);
-        assert_eq!(&got[0..3], &[[0.0; 3]; 3]);
-        assert_eq!(&got[3..], &c[..]);
+        assert_eq!(got.len(), 8, "the offset never lengthens the packet");
+        for i in 0..8 {
+            assert_eq!(got[i], c[(i + 8 - 3) % 8], "i={i}");
+        }
     }
 
     #[test]
-    fn negative_offset_rotates_the_chain() {
+    fn negative_offset_shifts_the_chain_toward_lower_indices() {
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, -3).unwrap();
         let c = chain8();
         let got = apply_offset(&c, &l);
@@ -943,13 +940,30 @@ mod tests {
     }
 
     #[test]
+    fn offset_beyond_the_count_wraps_around_the_loop() {
+        // The last LED is next to the first: 10 mod 8 = 2, -10 mod 8 = 6.
+        let c = chain8();
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 10).unwrap();
+        let got = apply_offset(&c, &l);
+        for i in 0..8 {
+            assert_eq!(got[i], c[(i + 8 - 2) % 8], "offset +10, i={i}");
+        }
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, -10).unwrap();
+        let got = apply_offset(&c, &l);
+        for i in 0..8 {
+            assert_eq!(got[i], c[(i + 2) % 8], "offset -10, i={i}");
+        }
+    }
+
+    #[test]
     fn apply_offset_builds_the_wire_packet_from_graded_colors() {
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 2).unwrap();
         let graded: Vec<[u8; 3]> = (0..8).map(|i| [i as u8, 0, 0]).collect();
         let got = apply_offset(&graded, &l);
-        assert_eq!(got.len(), 10);
-        assert_eq!(&got[0..2], &[[0u8; 3]; 2]);
-        assert_eq!(&got[2..], &graded[..]);
+        assert_eq!(got.len(), 8);
+        for i in 0..8 {
+            assert_eq!(got[i], graded[(i + 8 - 2) % 8], "i={i}");
+        }
     }
 
     // ---- color grading --------------------------------------------------

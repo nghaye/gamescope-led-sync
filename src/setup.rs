@@ -586,22 +586,12 @@ mod tests {
         let (red, green, blue, yellow) = ([255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]);
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 0).unwrap();
         assert_eq!(test_pattern(&l), vec![yellow, yellow, red, red, green, green, blue, blue]);
-        // A positive offset pads the head with black LEDs.
+        // A positive offset circularly shifts the chain two LEDs
+        // forward along the loop, so blue wraps to the head.
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 2).unwrap();
         assert_eq!(
             test_pattern(&l),
-            vec![
-                [0, 0, 0],
-                [0, 0, 0],
-                yellow,
-                yellow,
-                red,
-                red,
-                green,
-                green,
-                blue,
-                blue
-            ]
+            vec![blue, blue, yellow, yellow, red, red, green, green]
         );
     }
 

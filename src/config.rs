@@ -447,7 +447,11 @@ mod tests {
         assert_eq!(cfg.layout.start(), StartPoint::Bc);
         assert_eq!(cfg.layout.direction(), Direction::Counterclockwise);
         assert_eq!(cfg.layout.offset(), 5);
-        assert_eq!(cfg.layout.packet_len(), 273);
+        assert_eq!(
+            cfg.layout.packet_len(),
+            268,
+            "the offset never lengthens the packet"
+        );
         assert_eq!(cfg.fps, 60.0);
         assert_eq!(cfg.sample_height, 480);
         assert_eq!(cfg.band_frac, 0.2);
@@ -601,15 +605,16 @@ mod tests {
     }
 
     #[test]
-    fn packet_length_beyond_490_rejected() {
+    fn count_beyond_490_rejected_whatever_the_offset() {
         // All four edges are set explicitly: unset edges keep the
-        // built-in defaults and would trip the count bound first.
+        // built-in defaults and would trip the count bound first. The
+        // offset is a circular shift: it never lengthens the packet.
         assert!(matches!(
-            parse("[layout]\ntop = 489\nright = 0\nbottom = 0\nleft = 0\noffset = 2\n"),
-            Err(ConfigError::Layout(LayoutError::PacketTooLong { len: 491 }))
+            parse("[layout]\ntop = 491\nright = 0\nbottom = 0\nleft = 0\noffset = -2\n"),
+            Err(ConfigError::Layout(LayoutError::TooManyLeds { count: 491 }))
         ));
         assert!(
-            parse("[layout]\ntop = 489\nright = 0\nbottom = 0\nleft = 0\noffset = 1\n").is_ok()
+            parse("[layout]\ntop = 489\nright = 0\nbottom = 0\nleft = 0\noffset = 30\n").is_ok()
         );
     }
 
