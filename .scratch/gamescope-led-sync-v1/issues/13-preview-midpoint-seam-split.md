@@ -18,7 +18,7 @@ yellow) and `--setup`'s test pattern (top red / right green / bottom blue /
 left yellow). The circular offset rotates the seam colors too, which is what
 makes the offset visible.
 
-**Status:** done (commit pending on main)
+**Status:** done (commit 2c9dad9 on main)
 
 - [x] `geometry.rs`: `Edge` enum, `seam_edge(start)`, `chain_edges(l)` (same
   ordering as `chain()`), `edge_pattern(l, edge_colors, seam)` = chain tags +
