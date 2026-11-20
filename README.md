@@ -127,6 +127,6 @@ Manual E2E checklist: `./deploy/install.sh --enable`; launch a game and verify t
 
 ## License
 
-Copyright 2026 larry0x.
+Copyright 2026 larry0x, nghaye.
 
 Licensed under the [Apache License, Version 2.0](./LICENSE).
