@@ -343,6 +343,78 @@ pub fn chain(e: &EdgeColors, l: &Layout) -> Vec<[f32; 3]> {
         .collect()
 }
 
+/// Which physical edge a zone belongs to, in the base list's order:
+/// left edge, top edge, right edge, bottom edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
+pub enum Edge {
+    Top = 0,
+    Right = 1,
+    Bottom = 2,
+    Left = 3,
+}
+
+/// The edge a midpoint start point sits on — the loop's seam edge. None
+/// for a corner start.
+pub fn seam_edge(start: StartPoint) -> Option<Edge> {
+    match start {
+        StartPoint::Tc => Some(Edge::Top),
+        StartPoint::Rc => Some(Edge::Right),
+        StartPoint::Bc => Some(Edge::Bottom),
+        StartPoint::Lc => Some(Edge::Left),
+        _ => None,
+    }
+}
+
+/// The edge tag of every chain position, first LED first — exactly the
+/// ordering `chain()` produces (the base list's per-edge runs, rotated
+/// or reversed per the start point and direction).
+pub fn chain_edges(l: &Layout) -> Vec<Edge> {
+    let mut base = Vec::with_capacity(l.count());
+    base.extend(std::iter::repeat_n(Edge::Left, l.left()));
+    base.extend(std::iter::repeat_n(Edge::Top, l.top()));
+    base.extend(std::iter::repeat_n(Edge::Right, l.right()));
+    base.extend(std::iter::repeat_n(Edge::Bottom, l.bottom()));
+    let s = start_index(l);
+    let count = l.count();
+    (0..count)
+        .map(|i| match l.direction() {
+            Direction::Clockwise => base[(s + i) % count],
+            Direction::Counterclockwise => base[(s + count - i) % count],
+        })
+        .collect()
+}
+
+/// A per-edge test pattern run through the same chain + offset math as
+/// the live colors: `edge_colors[edge as usize]` for each LED. When the
+/// start point is an edge midpoint, that seam edge is split in two at
+/// the loop's seam: its head run (the beginning of the strip) keeps the
+/// edge color, its tail run (the end of the strip, physically next to
+/// the beginning) is painted `seam`, so the two halves of the seam edge
+/// read differently — which is what makes the circular offset visible.
+pub fn edge_pattern(l: &Layout, edge_colors: &[[u8; 3]; 4], seam: [u8; 3]) -> Vec<[u8; 3]> {
+    let edges = chain_edges(l);
+    let seam_e = seam_edge(l.start());
+    // The head run of the seam edge is the chain's leading run of that
+    // edge; its tail run sits at the chain's end.
+    let head = match seam_e {
+        Some(e) => edges.iter().take_while(|&&t| t == e).count(),
+        None => 0,
+    };
+    let colored: Vec<[u8; 3]> = edges
+        .iter()
+        .enumerate()
+        .map(|(i, &e)| {
+            if Some(e) == seam_e && i >= head {
+                seam
+            } else {
+                edge_colors[e as usize]
+            }
+        })
+        .collect();
+    apply_offset(&colored, l)
+}
+
 /// Build the DRGB packet from the chain. The strip is a loop — the last
 /// LED is physically next to the first — so the offset is a circular
 /// shift of the whole strip, whatever its sign: LED `i` gets
@@ -964,6 +1036,103 @@ mod tests {
         for i in 0..8 {
             assert_eq!(got[i], graded[(i + 8 - 2) % 8], "i={i}");
         }
+    }
+
+    // ---- seam edge / edge_pattern ---------------------------------------
+
+    #[test]
+    fn seam_edge_is_the_midpoint_edge_only() {
+        assert_eq!(seam_edge(StartPoint::Tc), Some(Edge::Top));
+        assert_eq!(seam_edge(StartPoint::Rc), Some(Edge::Right));
+        assert_eq!(seam_edge(StartPoint::Bc), Some(Edge::Bottom));
+        assert_eq!(seam_edge(StartPoint::Lc), Some(Edge::Left));
+        for corner in [
+            StartPoint::Bl,
+            StartPoint::Br,
+            StartPoint::Tr,
+            StartPoint::Tl,
+        ] {
+            assert_eq!(seam_edge(corner), None);
+        }
+    }
+
+    #[test]
+    fn chain_edges_matches_chain_ordering() {
+        // Same base runs as chain(): left, top, right, bottom, rotated
+        // per the start point and direction.
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 0).unwrap();
+        assert_eq!(
+            chain_edges(&l),
+            vec![
+                Edge::Left,
+                Edge::Left,
+                Edge::Top,
+                Edge::Top,
+                Edge::Right,
+                Edge::Right,
+                Edge::Bottom,
+                Edge::Bottom,
+            ]
+        );
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Counterclockwise, 0).unwrap();
+        assert_eq!(
+            chain_edges(&l),
+            vec![
+                Edge::Bottom,
+                Edge::Bottom,
+                Edge::Right,
+                Edge::Right,
+                Edge::Top,
+                Edge::Top,
+                Edge::Left,
+                Edge::Left,
+            ]
+        );
+    }
+
+    #[test]
+    fn edge_pattern_splits_a_midpoint_seam_edge_head_red_tail_orange() {
+        // bc clockwise, 2 per edge: chain tags = [B,L,L,T,T,R,R,B]; the
+        // head run [B] keeps bottom's color, the tail run [B] is the
+        // seam color.
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bc, Direction::Clockwise, 0).unwrap();
+        let colors = [[0, 1, 0], [0, 2, 0], [0, 3, 0], [0, 4, 0]]; // per Edge order T,R,B,L
+        let got = edge_pattern(&l, &colors, [9, 9, 9]);
+        assert_eq!(
+            got,
+            vec![
+                [0, 3, 0], // head of the seam edge: bottom color
+                [0, 4, 0],
+                [0, 4, 0],
+                [0, 1, 0],
+                [0, 1, 0],
+                [0, 2, 0],
+                [0, 2, 0],
+                [9, 9, 9], // tail of the seam edge: seam color
+            ]
+        );
+    }
+
+    #[test]
+    fn edge_pattern_keeps_corner_starts_single_colored() {
+        // A corner start has no seam edge: every zone keeps its edge color.
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 0).unwrap();
+        let colors = [[0, 1, 0], [0, 2, 0], [0, 3, 0], [0, 4, 0]];
+        let got = edge_pattern(&l, &colors, [9, 9, 9]);
+        assert_eq!(
+            got,
+            vec![
+                [0, 4, 0],
+                [0, 4, 0],
+                [0, 1, 0],
+                [0, 1, 0],
+                [0, 2, 0],
+                [0, 2, 0],
+                [0, 3, 0],
+                [0, 3, 0],
+            ]
+        );
+        assert!(!got.contains(&[9, 9, 9]), "no seam color on a corner start");
     }
 
     // ---- color grading --------------------------------------------------

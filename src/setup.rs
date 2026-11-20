@@ -341,7 +341,8 @@ fn converse(
             "t" | "test" => {
                 io.say(
                     "lighting each edge in its own color for 3 s \
-                     (top red, right green, bottom blue, left yellow), then black...",
+                     (top red, right green, bottom blue, left yellow; on a midpoint \
+                     start edge the strip's end is orange), then black...",
                 );
                 match strip(host.as_deref().unwrap_or(""), port, &layout) {
                     Ok(()) => io.say("strip test done"),
@@ -458,15 +459,19 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
 /// One solid color per edge (top red, right green, bottom blue, left
 /// yellow), chained and offset exactly like the live colors, so the
 /// test also shows whether the counts and start/direction are right.
+/// On a midpoint start edge, the end of the strip (the loop's seam) is
+/// orange, so the two halves of that edge read differently.
 fn test_pattern(l: &Layout) -> Vec<[u8; 3]> {
-    let edges = geometry::EdgeColors {
-        top: vec![[255.0, 0.0, 0.0]; l.top()],
-        right: vec![[0.0, 255.0, 0.0]; l.right()],
-        bottom: vec![[0.0, 0.0, 255.0]; l.bottom()],
-        left: vec![[255.0, 255.0, 0.0]; l.left()],
-    };
-    let chained = geometry::chain(&edges, l);
-    geometry::apply_offset(&geometry::shape_colors(&chained, 1.0, 1.0, 1.0), l)
+    geometry::edge_pattern(
+        l,
+        &[
+            [255, 0, 0],   // top: red
+            [0, 255, 0],   // right: green
+            [0, 0, 255],   // bottom: blue
+            [255, 255, 0], // left: yellow
+        ],
+        [255, 165, 0], // seam (end of the strip on a midpoint edge): orange
+    )
 }
 
 /// Send the test pattern for TEST_HOLD so WLED stays in realtime mode,

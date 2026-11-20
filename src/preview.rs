@@ -6,11 +6,15 @@
 //! One solid color per segment — bottom red, left blue, top green, right
 //! yellow — chained and offset exactly like the live colors, so the
 //! preview shows what the counts, start point, direction, and offset do.
+//! When the start point is an edge midpoint (ticket 13), that edge is
+//! split at the loop's seam: its beginning keeps the edge color, its end
+//! is orange, so the two halves of the seam edge read differently and the
+//! circular offset is visible on the strip.
 
 use {
     crate::{
         cli::Config,
-        geometry::{self, EdgeColors, Layout},
+        geometry::{self, Layout},
         output::WledSender,
     },
     std::{process::ExitCode, thread::sleep, time::Duration},
@@ -21,16 +25,19 @@ use {
 const TICK: Duration = Duration::from_millis(250);
 
 /// The test pattern: one solid color per edge, run through the same
-/// chain and offset math as the live colors (§5.2/§5.3).
+/// chain and offset math as the live colors (§5.2/§5.3). On a midpoint
+/// start edge, the end of the strip (the loop's seam) is orange.
 pub fn segment_pattern(l: &Layout) -> Vec<[u8; 3]> {
-    let edges = EdgeColors {
-        top: vec![[0.0, 255.0, 0.0]; l.top()],       // green
-        right: vec![[255.0, 255.0, 0.0]; l.right()], // yellow
-        bottom: vec![[255.0, 0.0, 0.0]; l.bottom()], // red
-        left: vec![[0.0, 0.0, 255.0]; l.left()],     // blue
-    };
-    let chained = geometry::chain(&edges, l);
-    geometry::apply_offset(&geometry::shape_colors(&chained, 1.0, 1.0, 1.0), l)
+    geometry::edge_pattern(
+        l,
+        &[
+            [0, 255, 0],   // top: green
+            [255, 255, 0], // right: yellow
+            [255, 0, 0],   // bottom: red
+            [0, 0, 255],   // left: blue
+        ],
+        [255, 165, 0], // seam (end of the strip on a midpoint edge): orange
+    )
 }
 
 /// Send the pattern until a signal. The endpoint and layout come from
@@ -54,7 +61,7 @@ pub fn run(cfg: &Config) -> ExitCode {
     };
     let colors = segment_pattern(&cfg.layout);
     tracing::info!(
-        "--preview-strip: packet of {} LEDs, bottom red / left blue / top green / right yellow, sending to {}:{}",
+        "--preview-strip: packet of {} LEDs, bottom red / left blue / top green / right yellow (seam orange on a midpoint start), sending to {}:{}",
         cfg.layout.packet_len(),
         host,
         cfg.port,
@@ -106,15 +113,51 @@ mod tests {
     }
 
     #[test]
-    fn pattern_from_a_midpoint_start() {
-        // bc clockwise: the chain starts in the middle of the bottom edge.
+    fn pattern_from_a_midpoint_start_splits_the_seam_edge() {
+        // bc clockwise: the chain starts in the middle of the bottom
+        // edge, so the bottom edge is split at the loop's seam — the
+        // beginning of the strip stays red, its end (the last chain
+        // positions) is orange.
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bc, Direction::Clockwise, 0).unwrap();
-        let (red, green, blue, yellow) = ([255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]);
+        let (red, green, blue, yellow, orange) = (
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255],
+            [255, 255, 0],
+            [255, 165, 0],
+        );
         // base = [L1,L0,T0,T1,R0,R1,B1,B0], s = nl+nt+nr+nb/2 = 7
-        // -> chain = B0,L1,L0,T0,T1,R0,R1,B1
+        // -> chain = B0,L1,L0,T0,T1,R0,R1,B1; head run = [B0] (red),
+        // tail run = [B1] (orange).
         assert_eq!(
             segment_pattern(&l),
-            vec![red, blue, blue, green, green, yellow, yellow, red]
+            vec![red, blue, blue, green, green, yellow, yellow, orange]
         );
+        // Counterclockwise from bc starts at the other half of the bottom
+        // edge: chain = B1,R1,R0,T1,T0,L0,L1,B0 -> [red, y, y, g, g, b, b, orange].
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bc, Direction::Counterclockwise, 0).unwrap();
+        assert_eq!(
+            segment_pattern(&l),
+            vec![red, yellow, yellow, green, green, blue, blue, orange]
+        );
+    }
+
+    #[test]
+    fn midpoint_split_follows_the_odd_edge_halves_and_the_offset() {
+        // bottom = 5, start = bc clockwise: s = nl+nt+nr+nb/2 = 5 in
+        // base = [L0,T0,R0,B4,B3,B2,B1,B0], chain = [B2,B1,B0,L0,T0,R0,B4,B3].
+        // Head run = 3 red, tail run = 2 orange; offset +1 shifts the
+        // whole loop one LED forward, seam colors included.
+        let l = Layout::new(1, 1, 5, 1, StartPoint::Bc, Direction::Clockwise, 1).unwrap();
+        let (red, green, blue, yellow, orange) = (
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255],
+            [255, 255, 0],
+            [255, 165, 0],
+        );
+        let chain = [red, red, red, blue, green, yellow, orange, orange];
+        let want: Vec<[u8; 3]> = (0..8).map(|i| chain[(i + 8 - 1) % 8]).collect();
+        assert_eq!(segment_pattern(&l), want);
     }
 }

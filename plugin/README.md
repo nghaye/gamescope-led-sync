@@ -29,7 +29,10 @@ reloaded at boot.
 Entering the screen **pauses the capture** (resumed on exit if it was
 running) and lights each of the 4 strip segments in its own color — **bottom
 red, left blue, top green, right yellow** — using the daemon's
-`--preview-strip` mode, spawned by the backend with the current layout.
+`--preview-strip` mode, spawned by the backend with the current layout. When
+the start point is an **edge midpoint**, that edge is split at the loop's
+seam: the beginning of the strip keeps the segment color, the end is
+**orange**, so you can see the seam and the circular offset on the strip.
 Every change (segment lengths, start point, direction, offset, WLED host)
 **immediately respawns the preview** with the draft layout, so you can check
 the segment lengths on the strip itself. **Nothing is written to the config

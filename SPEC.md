@@ -135,7 +135,8 @@ plus one flag per config field: `--wled HOST`, `--port`, `--timeout`,
 and debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip`
 (sends the per-segment test pattern — bottom red, left blue, top green,
 right yellow — to WLED until SIGTERM; used by the Decky plugin's
-configuration screen for the live preview), plus
+configuration screen for the live preview; on a midpoint start edge the end
+of the strip is orange, so the loop's seam is visible), plus
 `--setup`: interactive first-run setup that asks for the WLED host and the
 strip layout (LED counts per edge, start point, direction), probes the
 controller over HTTP (`GET /json/info`) when the host is entered, lights
@@ -414,7 +415,10 @@ One `Content` component with `mode: "main" | "config"`.
   called with the current config: the strip lights each segment in its own
   color — **bottom red, left blue, top green, right yellow** — via the
   daemon's `--preview-strip` mode, so the user sees the segments while
-  editing their lengths.
+  editing their lengths. When the start point is an **edge midpoint** (ticket
+  13), that edge is split at the loop's seam: the beginning of the strip
+  keeps the edge color, the end is **orange**, so the two halves of the seam
+  edge read differently and the circular offset is visible on the strip.
 - Every draft change calls `preview_set` again (debounced 300 ms; the
   backend respawns the preview process with the new layout as CLI flags).
   **Nothing is written to the config file until «Save and quit»** — the
@@ -456,7 +460,8 @@ One `Content` component with `mode: "main" | "config"`.
   ticket 10: `[capture] start_paused` (file parse, `--start-paused` override,
   reload applies the pause flag on change) and the `--preview-strip`
   segment pattern (bottom red / left blue / top green / right yellow through
-  `chain` + `apply_offset`, incl. midpoint start and circular offset).
+  `chain_edges` + `apply_offset`, incl. circular offset and the midpoint-seam
+  split: head run keeps the edge color, tail run is orange).
 - `--dump` / `--preview` grade with saturation + gamma + brightness, so the
   diagnostics match the LED output exactly.
 - New files must pass the existing `just` recipes (markdownlint on SPEC.md and
