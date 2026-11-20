@@ -15,7 +15,7 @@ a sign change can no longer break the WLED realtime stream (the old
 `count + max(offset,0)` packet-length rule is gone, along with the
 `PacketTooLong` error and the leading-black-LEDs padding).
 
-**Status:** done (commit pending on main)
+**Status:** done (commit b064d94 on main)
 
 - [x] `geometry.rs`: `apply_offset()` = euclidean rotation for any sign, `packet_len() = count()`, `Layout::new` only checks `count ≤ 490`, `PacketTooLong` removed; unit tests updated (0, +n, −n, `|offset| > count` wraps, 490 ok / 491 rejected)
 - [x] `cli.rs` `--offset` help text; `config.rs` / `preview.rs` / `setup.rs` / `capture.rs` comments + tests
