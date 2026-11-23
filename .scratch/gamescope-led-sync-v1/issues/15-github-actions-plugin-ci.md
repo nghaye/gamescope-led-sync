@@ -27,7 +27,7 @@ changed both and nothing on GitHub validated them.
 - `shell.nix` adds `nodejs`, `biome`, `python3` so the nix dev shell provides
   what those recipes call (CI runs them via `nix develop`).
 
-**Status:** done (commit <hash> on main)
+**Status:** done (commit 7594574 on main)
 
 - [x] `.github/workflows/js.yml`, `.github/workflows/python.yml` (pinned rev,
   paths filters, same shape as the existing five)
