@@ -22,7 +22,7 @@ naturally jumps the hole (the seam edge's kept zones sit at the creux edges).
 UI: a **slider in the configuration screen, 0..50, step 1, default 0**.
 Config key `[layout] gap`, CLI flag `--gap N`.
 
-**Status:** done (commit <hash> on main)
+**Status:** done (commit 735203d on main)
 
 - [x] `geometry.rs`: `Layout.gap` + `with_gap()` + `MAX_GAP`/`GapTooLarge`,
   `seam_hole()`, hole-aware zone sampling in `edge_means()` (`zones_x_hole` /
