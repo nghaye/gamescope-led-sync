@@ -86,6 +86,13 @@ struct Cli {
     #[arg(long, value_name = "N", default_value_t = 0)]
     offset: i32,
 
+    /// Hole at the loop seam, in LED pitches, between the strip's last and
+    /// first LED (e.g. a cable duct at the bottom center): the creux region
+    /// is skipped when sampling the screen, so each LED shows the zone
+    /// physically in front of it; the packet length stays count (0..=50)
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    gap: usize,
+
     /// Saturation gain; above 1 compensates the muted HDR capture
     #[arg(long, default_value_t = 1.0)]
     saturation: f32,
@@ -235,7 +242,12 @@ fn merge(cli: &Cli, matches: &clap::ArgMatches, mut cfg: Config) -> Result<Confi
     } else {
         cfg.layout.offset()
     };
-    cfg.layout = Layout::new(top, right, bottom, left, start, direction, offset)?;
+    let gap = if on_cli("gap") {
+        cli.gap
+    } else {
+        cfg.layout.gap()
+    };
+    cfg.layout = Layout::new(top, right, bottom, left, start, direction, offset)?.with_gap(gap)?;
 
     if on_cli("start_paused") {
         cfg.start_paused = cli.start_paused;
@@ -254,6 +266,7 @@ fn merge(cli: &Cli, matches: &clap::ArgMatches, mut cfg: Config) -> Result<Confi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::LayoutError;
 
     fn cli_from(args: &[&str]) -> (Cli, clap::ArgMatches) {
         let matches = Cli::command().try_get_matches_from(args).unwrap();
@@ -276,6 +289,7 @@ mod tests {
             top = 10
             direction = "counterclockwise"
             offset = 3
+            gap = 4
             [processing]
             fps = 60
             brightness = 0.25
@@ -291,6 +305,8 @@ mod tests {
             "clockwise",
             "--offset",
             "9",
+            "--gap",
+            "11",
             "--brightness",
             "0.75",
             "--dry-run",
@@ -300,6 +316,7 @@ mod tests {
         assert_eq!(cfg.port, 2222, "CLI > file");
         assert_eq!(cfg.layout.direction(), Direction::Clockwise, "CLI > file");
         assert_eq!(cfg.layout.offset(), 9, "CLI > file");
+        assert_eq!(cfg.layout.gap(), 11, "CLI > file");
         assert_eq!(cfg.brightness, 0.75, "CLI > file");
         assert_eq!(cfg.layout.top(), 10, "file > default");
         assert_eq!(cfg.fps, 60.0, "file > default");
@@ -319,6 +336,7 @@ mod tests {
             start = "bc"
             direction = "counterclockwise"
             offset = -5
+            gap = 6
             [processing]
             band_frac = 0.2
             "#,
@@ -330,6 +348,7 @@ mod tests {
         assert_eq!(cfg.layout.start(), StartPoint::Bc);
         assert_eq!(cfg.layout.direction(), Direction::Counterclockwise);
         assert_eq!(cfg.layout.offset(), -5);
+        assert_eq!(cfg.layout.gap(), 6, "file > default");
         assert_eq!(cfg.band_frac, 0.2);
         assert_eq!(cfg.port, 21324, "default");
         assert!(!cfg.dry_run);
@@ -344,6 +363,7 @@ mod tests {
         assert_eq!(cfg.layout.start(), StartPoint::Bl);
         assert_eq!(cfg.layout.direction(), Direction::Clockwise);
         assert_eq!(cfg.layout.offset(), 0);
+        assert_eq!(cfg.layout.gap(), 0);
         assert_eq!(cfg.brightness, 1.0);
         assert_eq!(cfg.fps, d.fps);
         assert!(cfg.wled.is_none());
@@ -355,7 +375,10 @@ mod tests {
         let (cli, matches) = cli_from(&["gamescope-led-sync", "--port", "0"]);
         let err = merge(&cli, &matches, Config::defaults()).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("wled.port") && msg.contains("1..=65535"), "{msg}");
+        assert!(
+            msg.contains("wled.port") && msg.contains("1..=65535"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -381,12 +404,34 @@ mod tests {
     }
 
     #[test]
+    fn cli_gap_above_50_is_a_layout_error() {
+        // The seam hole is capped at 50 LED pitches (the Decky slider's
+        // max); the packet length stays count whatever the gap.
+        let (cli, matches) = cli_from(&["gamescope-led-sync", "--gap", "51"]);
+        let err = merge(&cli, &matches, Config::defaults()).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigError::Layout(LayoutError::GapTooLarge { gap: 51 })
+            ),
+            "{err}"
+        );
+        let (cli, matches) = cli_from(&["gamescope-led-sync", "--gap", "50"]);
+        let cfg = merge(&cli, &matches, Config::defaults()).unwrap();
+        assert_eq!(cfg.layout.gap(), 50);
+        assert_eq!(cfg.layout.packet_len(), cfg.layout.count());
+    }
+
+    #[test]
     fn direction_and_start_reject_unknown_codes() {
         for args in [
             ["gamescope-led-sync", "--direction", "sideways"],
             ["gamescope-led-sync", "--start", "xx"],
         ] {
-            assert!(Cli::command().try_get_matches_from(args).is_err(), "{args:?}");
+            assert!(
+                Cli::command().try_get_matches_from(args).is_err(),
+                "{args:?}"
+            );
         }
     }
 

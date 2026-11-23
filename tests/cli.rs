@@ -64,6 +64,21 @@ fn counterclockwise_flag_is_removed() {
 }
 
 #[test]
+fn gap_above_50_exits_2_and_names_the_bound() {
+    // The seam hole is capped at 50 LED pitches (the Decky slider's max);
+    // the packet length stays count whatever the gap.
+    let out = run(&["--gap", "51"]);
+    let stderr = stderr_of(&out);
+    assert_eq!(out.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        stderr.contains("gap") && stderr.contains("50"),
+        "stderr: {stderr}"
+    );
+    // 50 itself is accepted — covered by the cli::tests unit tests, since a
+    // valid run would start the daemon and block this test.
+}
+
+#[test]
 fn help_lists_the_full_v1_cli_surface() {
     let out = run(&["--help"]);
     assert_eq!(out.status.code(), Some(0));
@@ -82,6 +97,7 @@ fn help_lists_the_full_v1_cli_surface() {
         "--start",
         "--direction",
         "--offset",
+        "--gap",
         "--fps",
         "--sample-height",
         "--band",
@@ -95,7 +111,10 @@ fn help_lists_the_full_v1_cli_surface() {
     ] {
         assert!(stdout.contains(flag), "help must list {flag}:\n{stdout}");
     }
-    assert!(!stdout.contains("--counterclockwise"), "help must not list it");
+    assert!(
+        !stdout.contains("--counterclockwise"),
+        "help must not list it"
+    );
 }
 
 /// --setup with EOF on stdin (non-interactive) must quit cleanly with
@@ -113,7 +132,10 @@ fn setup_with_eof_on_stdin_quits_without_writing() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "stdout: {stdout}");
-    assert!(stdout.contains("no config file written"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("no config file written"),
+        "stdout: {stdout}"
+    );
     assert!(!config.exists(), "setup must not write on EOF");
     let _ = fs::remove_dir_all(&dir);
 }

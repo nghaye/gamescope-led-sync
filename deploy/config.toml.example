@@ -38,6 +38,12 @@ direction = "clockwise"
 # offset < 0 toward lower ones (left), wrapping around. The packet length
 # always stays count.
 offset = 0
+# Hole at the loop seam, in LED pitches, between the strip's last and first
+# LED (e.g. a cable duct at the bottom center, ~7 LEDs wide): the creux
+# region of the screen is skipped when sampling, so each LED shows the zone
+# physically in front of it. 0..=50, default 0 (closed loop). The packet
+# length stays count — the hole has no LEDs.
+gap = 0
 
 [processing]
 # Processing and send rate, 1..240 (Decky UI: 10..60).

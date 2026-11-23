@@ -31,6 +31,7 @@ interface Cfg {
     start: string;
     direction: string;
     offset: number;
+    gap: number;
   };
   processing: {
     fps: number;
@@ -47,7 +48,7 @@ interface Cfg {
 
 const DEFAULTS: Cfg = {
   wled: { host: null, port: 21324, timeout_s: 2 },
-  layout: { top: 132, right: 75, bottom: 132, left: 75, start: "bl", direction: "clockwise", offset: 0 },
+  layout: { top: 132, right: 75, bottom: 132, left: 75, start: "bl", direction: "clockwise", offset: 0, gap: 0 },
   processing: {
     fps: 30,
     sample_height: 240,
@@ -476,6 +477,17 @@ function Content() {
             step={1}
             value={draft.layout.offset}
             onChange={(v) => patchDraft("layout", "offset", Math.round(sliderNum(v)))}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <SliderField
+            label={`Gap (${draft.layout.gap} LEDs)`}
+            description="Hole at the strip's seam, between the last and first LED (e.g. a cable duct at the bottom center): the creux region is skipped when sampling the screen, so each LED shows the zone physically in front of it. The packet length stays the active LED count."
+            min={0}
+            max={50}
+            step={1}
+            value={draft.layout.gap}
+            onChange={(v) => patchDraft("layout", "gap", Math.round(sliderNum(v)))}
           />
         </PanelSectionRow>
       </PanelSection>

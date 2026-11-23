@@ -83,11 +83,15 @@ pub enum LayoutError {
     TooManyLeds { count: usize },
     #[error("start {start} is a midpoint and needs its edge to have at least 1 LED")]
     MidpointOnEmptyEdge { start: &'static str },
+    #[error("gap {gap} exceeds the maximum seam hole of 50 LED pitches")]
+    GapTooLarge { gap: usize },
 }
 
 /// LED counts per edge plus the strip's physical orientation. A Layout
 /// only exists if the chain fits one DRGB packet (490 LEDs); the offset
-/// is a circular shift of the loop and never changes the packet length.
+/// is a circular shift of the loop and never changes the packet length,
+/// and so does the gap: the seam hole has no LEDs, the packet stays
+/// `count`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     top: usize,
@@ -97,6 +101,7 @@ pub struct Layout {
     start: StartPoint,
     direction: Direction,
     offset: i32,
+    gap: usize,
 }
 
 impl Layout {
@@ -140,6 +145,7 @@ impl Layout {
             start,
             direction,
             offset,
+            gap: 0,
         })
     }
 
@@ -171,13 +177,35 @@ impl Layout {
         self.offset
     }
 
+    /// The maximum seam hole (the Decky slider's max, §4.2): at most 50
+    /// LED pitches between the strip's last and first LED.
+    pub const MAX_GAP: usize = 50;
+
+    /// Set the hole at the loop seam (ticket 14, D13): `gap` LED pitches
+    /// between the strip's last and first LED. The hole lies on the seam
+    /// edge and is skipped when sampling the screen (see `seam_hole`), so
+    /// no LED shows the screen region behind the creux. The packet length
+    /// stays `count` — the hole has no LEDs.
+    pub fn with_gap(mut self, gap: usize) -> Result<Layout, LayoutError> {
+        if gap > Self::MAX_GAP {
+            return Err(LayoutError::GapTooLarge { gap });
+        }
+        self.gap = gap;
+        Ok(self)
+    }
+
+    pub fn gap(&self) -> usize {
+        self.gap
+    }
+
     pub fn count(&self) -> usize {
         self.top + self.right + self.bottom + self.left
     }
 
     /// LEDs in the DRGB packet: always the whole chain. The strip is a
     /// loop (the last LED sits next to the first), so the offset only
-    /// shifts it circularly and never lengthens the packet.
+    /// shifts it circularly, and the gap (D13) is a hole without LEDs,
+    /// so neither ever lengthens the packet.
     pub fn packet_len(&self) -> usize {
         self.count()
     }
@@ -186,7 +214,7 @@ impl Layout {
     /// reload that changed the layout (§7).
     pub fn summary(&self) -> String {
         format!(
-            "top {}, right {}, bottom {}, left {} = {} LEDs, start {}, {}, offset {}",
+            "top {}, right {}, bottom {}, left {} = {} LEDs, start {}, {}, offset {}, gap {}",
             self.top,
             self.right,
             self.bottom,
@@ -195,6 +223,7 @@ impl Layout {
             self.start.name(),
             self.direction.name(),
             self.offset,
+            self.gap,
         )
     }
 }
@@ -267,18 +296,108 @@ fn zones_y(f: &Frame, cols: Range<usize>, n: usize, sh: usize) -> Vec<[f32; 3]> 
     out
 }
 
+/// Zones of a horizontal edge with a seam hole: the edge is divided into
+/// `n + hole_len` equal zones and the `hole_len` zones starting at
+/// `hole_start` (the creux) are dropped, so the `n` kept zones cover the
+/// edge minus the hole — each LED samples the screen region physically in
+/// front of it, not the region behind the creux.
+fn zones_x_hole(
+    f: &Frame,
+    rows: Range<usize>,
+    n: usize,
+    sw: usize,
+    hole: Option<(usize, usize)>,
+) -> Vec<[f32; 3]> {
+    match hole {
+        None => zones_x(f, rows, n, sw),
+        Some((h, g)) => {
+            let mut all = zones_x(f, rows, n + g, sw);
+            all.drain(h..h + g);
+            all
+        },
+    }
+}
+
+/// Vertical-edge counterpart of [`zones_x_hole`].
+fn zones_y_hole(
+    f: &Frame,
+    cols: Range<usize>,
+    n: usize,
+    sh: usize,
+    hole: Option<(usize, usize)>,
+) -> Vec<[f32; 3]> {
+    match hole {
+        None => zones_y(f, cols, n, sh),
+        Some((h, g)) => {
+            let mut all = zones_y(f, cols, n + g, sh);
+            all.drain(h..h + g);
+            all
+        },
+    }
+}
+
+/// The hole at the loop seam (ticket 14, D13), when `gap > 0`: the seam is
+/// between the strip's last and first LED, i.e. between base entries
+/// `b-1` and `b` of the chain's base list. Returns `(edge, hole_start,
+/// gap)` where `hole_start` is in the seam edge's **extended** (`n + gap`)
+/// canonical zone numbering (top/bottom left→right, left/right top→bottom).
+/// None when `gap == 0` (the loop is closed, every zone is sampled).
+fn seam_hole(l: &Layout) -> Option<(Edge, usize, usize)> {
+    let gap = l.gap();
+    if gap == 0 {
+        return None;
+    }
+    let count = l.count();
+    let s = start_index(l);
+    // The seam boundary b in the base list: between base[b-1] and base[b].
+    let b = match l.direction() {
+        Direction::Clockwise => s,
+        Direction::Counterclockwise => (s + 1) % count,
+    };
+    let nl = l.left();
+    let nt = l.top();
+    let nr = l.right();
+    // Base runs: left [0, nl), top [nl, nl+nt), right, bottom. The hole
+    // belongs to the run starting at (or containing) b. Top and right run
+    // in canonical order in the base list; left and bottom are reversed.
+    let (edge, run_start, n, reversed) = if b < nl {
+        (Edge::Left, 0, nl, true)
+    } else if b < nl + nt {
+        (Edge::Top, nl, nt, false)
+    } else if b < nl + nt + nr {
+        (Edge::Right, nl + nt, nr, false)
+    } else {
+        (Edge::Bottom, nl + nt + nr, l.bottom(), true)
+    };
+    let off = b - run_start;
+    let hole_start = if reversed {
+        n - off
+    } else {
+        off
+    };
+    Some((edge, hole_start, gap))
+}
+
 /// Per-edge zone colors in canonical reading order: top and bottom run
-/// left to right, left and right run top to bottom.
+/// left to right, left and right run top to bottom. With `gap > 0` the
+/// seam edge is divided into `n + gap` zones and the `gap` hole zones at
+/// the seam boundary (the creux between the strip's last and first LED)
+/// are dropped, so each edge still yields exactly its LED count of zones.
 pub fn edge_means(f: &Frame, band_frac: f64, l: &Layout) -> EdgeColors {
     let sw = sampled_count(f.width, f.step);
     let sh = sampled_count(f.height, f.step);
     let band = ((band_frac * sh as f64).round() as usize).clamp(1, sh);
     let band_w = band.min(sw);
+    let hole = seam_hole(l);
+    let hole_at = |e: Edge| match hole {
+        Some((he, h, g)) if he == e => Some((h, g)),
+        _ => None,
+    };
     EdgeColors {
-        top: zones_x(f, 0..band, l.top, sw),
-        bottom: zones_x(f, sh - band..sh, l.bottom, sw),
-        left: zones_y(f, 0..band_w, l.left, sh),
-        right: zones_y(f, sw - band_w..sw, l.right, sh),
+        top: zones_x_hole(f, 0..band, l.top, sw, hole_at(Edge::Top)),
+        bottom: zones_x_hole(f, sh - band..sh, l.bottom, sw, hole_at(Edge::Bottom)),
+        left: zones_y_hole(f, 0..band_w, l.left, sh, hole_at(Edge::Left)),
+        right: zones_y_hole(f, sw - band_w..sw, l.right, sh, hole_at(Edge::Right)),
     }
 }
 
@@ -657,6 +776,31 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn gap_defaults_to_zero_and_is_bounded_at_50() {
+        // The Decky slider's range, locked as the parameter's bound:
+        // 0..=50 LED pitches at the loop seam.
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 0).unwrap();
+        assert_eq!(l.gap(), 0, "Layout::new starts with a closed loop");
+        assert_eq!(
+            l.packet_len(),
+            l.count(),
+            "the gap never lengthens the packet"
+        );
+        let l = l.with_gap(7).unwrap();
+        assert_eq!(l.gap(), 7);
+        assert_eq!(
+            l.packet_len(),
+            8,
+            "the hole has no LEDs: packet stays count"
+        );
+        assert_eq!(l.count(), 8);
+        assert!(l.clone().with_gap(50).is_ok(), "50 is the maximum");
+        let err = l.clone().with_gap(51).unwrap_err();
+        assert!(matches!(err, LayoutError::GapTooLarge { gap: 51 }));
+        assert!(l.summary().contains("gap 7"), "{}", l.summary());
+    }
+
     // ---- edge_means -----------------------------------------------------
 
     #[test]
@@ -741,6 +885,114 @@ mod tests {
         assert_eq!(e.top[1].map(|v| v as u8), green);
         assert_eq!(e.bottom[0].map(|v| v as u8), red);
         assert_eq!(e.bottom[1].map(|v| v as u8), red);
+    }
+
+    // ---- seam hole (gap, ticket 14) --------------------------------------
+
+    // 2 zones per edge, count = 8; base runs: left [0,2), top [2,4),
+    // right [4,6), bottom [6,8). b = s (cw) or s+1 (ccw).
+    fn layout2x2(start: StartPoint, dir: Direction, gap: usize) -> Layout {
+        Layout::new(2, 2, 2, 2, start, dir, 0)
+            .unwrap()
+            .with_gap(gap)
+            .unwrap()
+    }
+
+    #[test]
+    fn seam_hole_is_none_when_gap_is_zero() {
+        let l = Layout::new(2, 2, 2, 2, StartPoint::Bc, Direction::Clockwise, 0).unwrap();
+        assert_eq!(seam_hole(&l), None);
+    }
+
+    #[test]
+    fn seam_hole_sits_at_the_seam_boundary_per_start_and_direction() {
+        // bc cw: s = 2+2+2+1 = 7, b = 7, bottom run [6,8), off = 1,
+        // reversed -> hole_start = nb - off = 1: the middle of the bottom.
+        assert_eq!(
+            seam_hole(&layout2x2(StartPoint::Bc, Direction::Clockwise, 3)),
+            Some((Edge::Bottom, 1, 3))
+        );
+        // bc ccw: s = 8-1-1 = 6, b = 7 -> same hole (midpoint is
+        // direction-independent).
+        assert_eq!(
+            seam_hole(&layout2x2(StartPoint::Bc, Direction::Counterclockwise, 3)),
+            Some((Edge::Bottom, 1, 3))
+        );
+        // tc cw: s = 2+1 = 3, b = 3, top run [2,4), off = 1 -> middle of top.
+        assert_eq!(
+            seam_hole(&layout2x2(StartPoint::Tc, Direction::Clockwise, 2)),
+            Some((Edge::Top, 1, 2))
+        );
+        // rc cw: s = 2+2+1 = 5, b = 5, right run [4,6), off = 1.
+        assert_eq!(
+            seam_hole(&layout2x2(StartPoint::Rc, Direction::Clockwise, 2)),
+            Some((Edge::Right, 1, 2))
+        );
+        // lc cw: s = 1, b = 1, left run [0,2), off = 1, reversed ->
+        // hole_start = nl - off = 1: middle of the left edge.
+        assert_eq!(
+            seam_hole(&layout2x2(StartPoint::Lc, Direction::Clockwise, 2)),
+            Some((Edge::Left, 1, 2))
+        );
+        // bl cw: s = 0, b = 0 -> left run, off = 0, reversed ->
+        // hole_start = nl = 2: the bottom end of the left edge (the corner).
+        assert_eq!(
+            seam_hole(&layout2x2(StartPoint::Bl, Direction::Clockwise, 2)),
+            Some((Edge::Left, 2, 2))
+        );
+        // tl cw: s = 2, b = 2 -> top run, off = 0: the left end of the top.
+        assert_eq!(
+            seam_hole(&layout2x2(StartPoint::Tl, Direction::Clockwise, 2)),
+            Some((Edge::Top, 0, 2))
+        );
+    }
+
+    #[test]
+    fn edge_means_skips_the_creux_on_the_seam_edge_only() {
+        // 60 px wide; the bottom band is painted in 10 px blocks, block z
+        // = [z, 0, 0], so a zone's mean color names the blocks it covers.
+        let data = frame(60, 40, |x, _| [(x / 10) as u8, 0, 0]);
+        let f = Frame {
+            data: &data,
+            width: 60,
+            height: 40,
+            stride: 240,
+            step: 1,
+        };
+        // bottom = 4, gap = 2, start = bc: the bottom edge is divided into
+        // 4+2 = 6 zones of 10 px and the 2 middle zones (blocks 2, 3 — the
+        // creux) are dropped; the 4 kept zones are blocks 0, 1, 4, 5.
+        let l = Layout::new(2, 2, 4, 2, StartPoint::Bc, Direction::Clockwise, 0)
+            .unwrap()
+            .with_gap(2)
+            .unwrap();
+        let e = edge_means(&f, 0.1, &l);
+        assert_eq!(e.bottom.len(), 4, "the edge still yields its LED count");
+        assert_eq!(
+            e.bottom
+                .iter()
+                .map(|c| c.map(|v| v as u8))
+                .collect::<Vec<_>>(),
+            vec![[0, 0, 0], [1, 0, 0], [4, 0, 0], [5, 0, 0]],
+            "the creux blocks 2 and 3 are not sampled"
+        );
+        // The other edges are untouched: 2 zones each over the full span.
+        assert_eq!(e.top.len(), 2);
+        assert_eq!(e.left.len(), 2);
+        assert_eq!(e.right.len(), 2);
+        // The chain's seam sits at the creux edges: bc cw starts at
+        // B[nb/2-1] = block 1 and ends at B[nb/2] = block 4.
+        let c = chain(&e, &l);
+        assert_eq!(c[0].map(|v| v as u8), [1, 0, 0]);
+        assert_eq!(c[l.count() - 1].map(|v| v as u8), [4, 0, 0]);
+        // gap = 0: the same edge is divided into 4 zones of 15 px, mixing
+        // neighbouring blocks — the creux is not skipped any more.
+        let l0 = Layout::new(2, 2, 4, 2, StartPoint::Bc, Direction::Clockwise, 0).unwrap();
+        let e0 = edge_means(&f, 0.1, &l0);
+        assert_eq!(e0.bottom.len(), 4);
+        // zone 2 covers px [30,45) = blocks 3 and 4 -> mean 3.33 -> 3.
+        assert_eq!(e0.bottom[2].map(|v| v as u8), [3, 0, 0]);
+        assert_ne!(e0.bottom, e.bottom, "gap 0 samples the whole edge");
     }
 
     // ---- chain ----------------------------------------------------------

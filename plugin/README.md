@@ -33,7 +33,7 @@ red, left blue, top green, right yellow** — using the daemon's
 the start point is an **edge midpoint**, that edge is split at the loop's
 seam: the beginning of the strip keeps the segment color, the end is
 **orange**, so you can see the seam and the circular offset on the strip.
-Every change (segment lengths, start point, direction, offset, WLED host)
+Every change (segment lengths, start point, direction, offset, gap, WLED host)
 **immediately respawns the preview** with the draft layout, so you can check
 the segment lengths on the strip itself. **Nothing is written to the config
 file until «Save and quit»** — the immediate effect goes exclusively through
@@ -44,6 +44,9 @@ Fields: WLED host/IP with a green **OK** / red **NOK** reachability indicator
 rotation switch (off = counterclockwise), the four segment LED counts with a
 live **total active LEDs** line, the offset slider (−20 … +20, step 1 — a
 circular shift of the whole strip, the last LED being next to the first), the
+gap slider (0 … 50, step 1 — a hole at the loop seam between the last and
+first LED, e.g. a cable duct; the creux region is skipped when sampling the
+screen and the packet length stays the active LED count), the
 screen band slider (1–20 %), and FPS.
 
 «Save and quit» validates and writes the draft through `save_config`

@@ -54,6 +54,7 @@ Value precedence: **CLI flag > config file > built-in default**. The daemon stat
 |               | `start`         | `"bl"`        | `bl bc br rc tr tc tl lc`              |
 |               | `direction`     | `"clockwise"` | `clockwise\|counterclockwise`          |
 |               | `offset`        | `0`           | integer; circular shift, packet length stays `count ≤ 490` |
+|               | `gap`           | `0`           | `0..=50`; hole at the loop seam (last↔first LED) in LED pitches, skipped when sampling the screen; packet length stays `count` |
 | `[processing]`| `fps`           | `30`          | `1..=240`                              |
 |               | `sample_height` | `240`         | `1..=16384`                            |
 |               | `band_frac`     | `0.08`        | `> 0 and < 1`                          |
@@ -65,11 +66,11 @@ Value precedence: **CLI flag > config file > built-in default**. The daemon stat
 | `[capture]`   | `node_name`     | `"gamescope"` | non-empty `media.name` of the node     |
 |               | `start_paused`  | `false`       | bool; start with the capture paused (Decky «Capture at startup») |
 
-See [deploy/config.toml.example](./deploy/config.toml.example) for a fully commented example (the 65" strip: `top=86 right=48 bottom=86 left=48`, `start="bc"`, `direction="clockwise"`, `offset=0`).
+See [deploy/config.toml.example](./deploy/config.toml.example) for a fully commented example (the 65" strip: `top=86 right=48 bottom=86 left=48`, `start="bc"`, `direction="clockwise"`, `offset=0`, `gap=0`).
 
 ### CLI overrides
 
-One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, `--start-paused` (start with the capture paused), plus debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip` (send the per-segment test pattern to WLED until SIGTERM). Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
+One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--gap N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, `--start-paused` (start with the capture paused), plus debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip` (send the per-segment test pattern to WLED until SIGTERM). Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
 
 ## Service management
 
@@ -88,14 +89,16 @@ The perimeter is a cyclic list of `count = top+right+bottom+left` zones. The str
 
 **Offset**: the strip is a **loop** — the last LED is physically next to the first — so `offset` is a circular shift of the whole strip: LED `i` gets zone `chain[(i − offset) mod count]`. `offset > 0` shifts the image toward higher LED indices (right along the strip), `offset < 0` toward lower indices (left), wrapping around the loop. The packet length is always `count` (≤ 490), whatever the offset — so changing it, sign included, can never break the WLED stream.
 
-**WLED segment-length rule**: the packet always starts at WLED LED index 0 and always carries the whole chain, so set your WLED segment length to `count` (e.g. 268 for the 65" strip). The offset only shifts the colors circularly within that segment.
+**Gap (seam hole)**: `gap` (0..=50, default 0) is a hole at the loop seam, in LED pitches, between the strip's **last and first LED** — e.g. a cable duct at the bottom center when the strip starts at `bc`. The seam edge is then divided into `n+gap` zones and the `gap` zones at the seam (the creux) are skipped, so no LED shows the screen region behind the creux and each LED shows the zone physically in front of it. The packet length stays `count`: the hole has no LEDs, and wrapping the offset across the seam jumps it.
+
+**WLED segment-length rule**: the packet always starts at WLED LED index 0 and always carries the whole chain, so set your WLED segment length to `count` (e.g. 268 for the 65" strip). The offset only shifts the colors circularly within that segment; the gap does not change the segment length.
 
 ## Decky plugin
 
 `plugin/` is a [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin (no root flag; runs as the session user) with two pages:
 
 - **Main page**: status lines (service, capture, live FPS, WLED strip reachability — polled every 5 s), a **Capture** switch (SIGUSR1 pause/resume; while paused nothing is sent and the WLED is released), a **Capture at startup** switch (`[capture] start_paused`, persisted in the config file and applied immediately on change), the **Brightness / Gamma / Saturation / Smooth** sliders, and a **Configuration** button. Sliders and switches save on change (debounced 400 ms) and go live at the daemon's next tick, and are reloaded at boot.
-- **Configuration screen**: entering it pauses the capture (resumed on exit) and lights each of the 4 strip segments in its own color (bottom red, left blue, top green, right yellow) via the daemon's `--preview-strip` mode; when the start point is an edge midpoint, that edge is split at the loop's seam — beginning keeps the segment color, end is orange — so the circular offset is visible on the strip. Every change is previewed live on the strip but **written to the config file only on «Save and quit»** («Cancel» leaves without saving). Fields: WLED host/IP with a green OK / red NOK reachability check, start point (8 full-word options), clockwise rotation switch, per-segment LED counts with a live total, offset slider (−20…+20, circular shift of the loop), screen band slider (1–20 %), FPS.
+- **Configuration screen**: entering it pauses the capture (resumed on exit) and lights each of the 4 strip segments in its own color (bottom red, left blue, top green, right yellow) via the daemon's `--preview-strip` mode; when the start point is an edge midpoint, that edge is split at the loop's seam — beginning keeps the segment color, end is orange — so the circular offset is visible on the strip. Every change is previewed live on the strip but **written to the config file only on «Save and quit»** («Cancel» leaves without saving). Fields: WLED host/IP with a green OK / red NOK reachability check, start point (8 full-word options), clockwise rotation switch, per-segment LED counts with a live total, offset slider (−20…+20, circular shift of the loop), gap slider (0…50, hole at the loop seam between the last and first LED — the creux is skipped when sampling the screen), screen band slider (1–20 %), FPS.
 
 `wled.timeout_s`, `wled.port`, `sample_height`, `behavior.on_no_session` and `capture.node_name` stay file-only. `deploy/install.sh` does **not** install the plugin — run `./plugin/install.sh` once as the normal user (no sudo: it installs through Decky Loader's local API; `--direct` falls back to a sudo copy + loader restart). See [plugin/README.md](./plugin/README.md).
 

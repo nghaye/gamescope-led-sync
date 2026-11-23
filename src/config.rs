@@ -123,6 +123,7 @@ pub struct LayoutFile {
     pub start: Option<String>,
     pub direction: Option<String>,
     pub offset: Option<i32>,
+    pub gap: Option<usize>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -297,7 +298,9 @@ impl Config {
             None => self.layout.direction(),
         };
         let offset = l.offset.unwrap_or(self.layout.offset());
-        self.layout = Layout::new(top, right, bottom, left, start, direction, offset)?;
+        let gap = l.gap.unwrap_or(self.layout.gap());
+        self.layout =
+            Layout::new(top, right, bottom, left, start, direction, offset)?.with_gap(gap)?;
 
         if let Some(v) = f.processing.fps {
             self.fps = v;
@@ -391,7 +394,8 @@ impl Config {
             l.start(),
             l.direction(),
             l.offset(),
-        )?;
+        )?
+        .with_gap(l.gap())?;
         Ok(())
     }
 }
@@ -424,6 +428,7 @@ mod tests {
             start = "bc"
             direction = "counterclockwise"
             offset = 5
+            gap = 7
             [processing]
             fps = 60
             sample_height = 480
@@ -447,10 +452,11 @@ mod tests {
         assert_eq!(cfg.layout.start(), StartPoint::Bc);
         assert_eq!(cfg.layout.direction(), Direction::Counterclockwise);
         assert_eq!(cfg.layout.offset(), 5);
+        assert_eq!(cfg.layout.gap(), 7);
         assert_eq!(
             cfg.layout.packet_len(),
             268,
-            "the offset never lengthens the packet"
+            "neither the offset nor the gap lengthens the packet"
         );
         assert_eq!(cfg.fps, 60.0);
         assert_eq!(cfg.sample_height, 480);
@@ -616,6 +622,22 @@ mod tests {
         assert!(
             parse("[layout]\ntop = 489\nright = 0\nbottom = 0\nleft = 0\noffset = 30\n").is_ok()
         );
+    }
+
+    #[test]
+    fn gap_is_bounded_at_50_led_pitches() {
+        // The hole at the loop seam has no LEDs: the packet length stays
+        // count, but the hole itself is capped at 50 pitches (the Decky
+        // slider's max).
+        assert!(matches!(
+            parse("[layout]\ngap = 51\n"),
+            Err(ConfigError::Layout(LayoutError::GapTooLarge { gap: 51 }))
+        ));
+        let cfg = parse("[layout]\ngap = 50\n").unwrap();
+        assert_eq!(cfg.layout.gap(), 50);
+        assert_eq!(cfg.layout.packet_len(), cfg.layout.count());
+        let d = Config::defaults();
+        assert_eq!(d.layout.gap(), 0, "default: a closed loop");
     }
 
     #[test]

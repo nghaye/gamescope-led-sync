@@ -33,10 +33,11 @@ scope for v1 (§15).
 | D10 | «Test one frame» button | Backend method only (no UI button since the ticket-10 refonte): runs the binary with `--once --dump`, the PNG is served by the plugin (`/plugins/<name>/data/last-frame.png`). |
 | D11 | Offset slider range in the UI | **−20 … +20, step 1** (fixed range; ticket 10 narrowed it from −30…+30). |
 | D12 | Capture at startup | `[capture] start_paused = false` (bool): the daemon starts paused when `true` (the Decky «Capture at startup» switch); a change of the key also applies **immediately** on live reload (§7). CLI override: `--start-paused`. |
+| D13 | Seam hole (`gap`, ticket 14) | `gap` (0..=50, default 0) is a **hole at the loop seam**, in LED pitches, between the strip's **last and first LED** (owner's creux: a cable duct ≈ 7 LEDs wide at the bottom center, with `start="bc"`). The hole lies on the **seam edge**: that edge is divided into `n+gap` zones and the `gap` zones at the seam boundary are dropped, so no LED samples the screen region behind the creux. The packet length **stays `count`** (the WLED segment holds only real LEDs); `chain()`/`apply_offset()` are unchanged — the offset still rotates the `count`-LED chain, and wrapping across the seam naturally jumps the hole. UI: slider **0..50, step 1** in the configuration screen. |
 
 Defaults chosen by default (flagged, correctable in the file): config example uses
 the 65" strip `top=86 right=48 bottom=86 left=48` (268 LEDs), `start="bc"`
-(owner's strip starts bottom-center), `direction="clockwise"`, `offset=0`.
+(owner's strip starts bottom-center), `direction="clockwise"`, `offset=0`, `gap=0`.
 `wled.timeout_s` (default 2) stays **file-only** — not exposed in the Decky
 UI (not selected in D9). `behavior.on_no_session` (default `"preset"`) and
 `capture.start_paused` (default `false`, D12) are file-only since the
@@ -91,6 +92,7 @@ left = 48
 start = "bc"            # bl|bc|br|rc|tr|tc|tl|lc
 direction = "clockwise" # clockwise|counterclockwise (viewed from the front)
 offset = 0              # integer; circular shift of the strip loop, packet length stays count <= 490
+gap = 0                 # 0..=50; hole at the loop seam (between the last and first LED) in LED pitches, skipped when sampling the screen; packet length stays count
 
 [processing]
 fps = 30                # 1..240 (UI: 10..60)
@@ -114,8 +116,10 @@ key will be introduced when the schema evolves.
 
 ### 4.3 Validation (shared by CLI and file)
 
-One `Config::validate()` used by both entry points. Rules: every bound above;
-`count = top+right+bottom+left ≥ 1` and `≤ 490`; `start` and
+One `Config::validate()` used by both entry points. Rules: every bound above
+(incl. `layout.gap` **0..=50**, D13); `count = top+right+bottom+left ≥ 1` and
+`≤ 490` (the gap is a hole without LEDs, so it does not count toward the
+packet); `start` and
 `direction` and `on_no_session` must be known codes; a midpoint `start` on an
 edge with 0 LEDs is rejected (§5.2); **unknown TOML keys are a
 hard error** (`deny_unknown_fields`) so typos cannot pass silently. Errors name
@@ -129,7 +133,7 @@ the previous config stays active (§7).
 `--config PATH`, `--dry-run` (replaces «omit `--wled`»: never send, log only),
 plus one flag per config field: `--wled HOST`, `--port`, `--timeout`,
 `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction
-<clockwise|counterclockwise>` (replaces `--counterclockwise`), `--offset N`,
+<clockwise|counterclockwise>` (replaces `--counterclockwise`), `--offset N`, `--gap N`,
 `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`,
 `--brightness`, `--start-paused` (forces `[capture] start_paused = true`),
 and debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip`
@@ -147,11 +151,19 @@ it exits without starting the daemon.
 
 ## 5. LED strip geometry (§ geometry.rs)
 
-### 5.1 Canonical zones (unchanged)
+### 5.1 Canonical zones (with the seam hole, D13)
 
 `edge_means()` returns per-edge zone colors in canonical order: top and bottom
 left→right, left and right top→bottom. Zone count per edge = the configured
 LED count of that edge.
+
+With `gap > 0` (D13), the **seam edge** (the start edge for a midpoint start;
+for a corner start the edge whose base-list run contains the seam boundary)
+is divided into `n + gap` equal zones and the `gap` zones at the seam boundary
+— the creux between the strip's last and first LED — are **dropped**
+(`seam_hole()`), so the edge still yields exactly `n` zones and no LED samples
+the screen region behind the creux. With `gap = 0` every zone of every edge is
+sampled, exactly as before.
 
 ### 5.2 Chain (§ `chain()`)
 
@@ -207,6 +219,11 @@ changes it.
 `chain()` returns the `count` zones; a separate `apply_offset()` builds the
 final packet (the circularly shifted chain). Both unit-tested (offset 0, +n,
 −n, `|offset| > count` wraps, `count = 490` ok, `491` rejected).
+
+With `gap > 0` (D13) the chain and the offset are unchanged: the offset still
+rotates the `count`-LED chain, and because the seam edge's kept zones sit at
+the creux edges, wrapping across the loop seam naturally jumps the hole. The
+packet length stays `count` — the hole has no LEDs.
 
 ### 5.4 Color grading order
 
@@ -378,7 +395,7 @@ bus") — the backend fills them in (`_session_env()`, pointing at
 | `capture_set_paused(bool)` | Manual capture pause via `systemctl --user kill --signal=SIGUSR1 gamescope-led-sync` (§6.2). Refuses when the service is not active; only signals when the parsed state differs from the request. Returns `{ok, error?}`. |
 | `probe_wled(host)` | Reachability check: HTTP `GET /json/info` on port 80 (same probe as `--setup`), 3 s timeout. Returns `{ok, info?}` / `{ok:false, error}`. Drives the green OK / red NOK next to the host field. |
 | `wled_status()` | `probe_wled` on the configured `wled.host`; returns `{ok, configured, host?, reachable, info?, error?}`. Strip status line of the main page. |
-| `preview_set(host, port, timeout_s, layout)` | Validate the draft layout (Python mirror of §4.3), then (re)spawn `BINARY --preview-strip --wled host --port port --timeout S --top … --right … --bottom … --left … --start … --direction … --offset …` (the draft layout as CLI flags overrides the file, §4.1) with `PR_SET_PDEATHSIG` so it dies with the plugin. Returns `{ok, packet_len}` or `{ok:false, errors}`; an invalid draft is not spawned. |
+| `preview_set(host, port, timeout_s, layout)` | Validate the draft layout (Python mirror of §4.3), then (re)spawn `BINARY --preview-strip --wled host --port port --timeout S --top … --right … --bottom … --left … --start … --direction … --offset … --gap …` (the draft layout as CLI flags overrides the file, §4.1) with `PR_SET_PDEATHSIG` so it dies with the plugin. Returns `{ok, packet_len}` or `{ok:false, errors}`; an invalid draft is not spawned. |
 | `preview_stop()` | Terminate the preview process. Called when leaving the configuration screen. |
 | `get_logs(n=200)` | `journalctl --user -u gamescope-led-sync -n N --no-pager`. (No UI button since the ticket-10 refonte.) |
 | `test_frame()` | Refuses when the service is active (two capture clients on one gamescope node are unsupported, §6.0): `{ok:false, error:"stop the service first"}`. Otherwise runs `[BINARY, "--config", CONFIG, "--once", "--dump", <plugin data dir>/last-frame.png]` (timeout 30 s; clear error if the binary is missing) and returns `{ok, log}`. PNG written to `DECKY_PLUGIN_RUNTIME_DIR` and served at `/plugins/<plugin.json name, URL-encoded>/data/last-frame.png` — the loader keys served URLs by display name, not by install folder. (No UI button since the ticket-10 refonte.) |
@@ -430,7 +447,10 @@ One `Content` component with `mode: "main" | "config"`.
   four numeric `TextField`s for the segment lengths (bottom, left, top,
   right); a read-only `Field` with the total active LED count
   (`top + right + bottom + left = N`, recomputed live); `SliderField`
-  offset **−20 … +20, step 1** (D11); `SliderField` screen band **1–20 %**;
+  offset **−20 … +20, step 1** (D11); `SliderField` **gap 0 … 50, step 1**
+  (D13: hole at the loop seam between the last and first LED, in LED pitches;
+  the creux is skipped when sampling the screen, the packet length stays the
+  active count); `SliderField` screen band **1–20 %**;
   numeric `TextField` FPS.
 - «Save and quit»: `save_config(draft)` (validation errors are shown and the
   screen stays), `preview_stop`, resume the capture if we paused it, back to
@@ -444,7 +464,8 @@ One `Content` component with `mode: "main" | "config"`.
 - UDP realtime enabled, protocol **DRGB**, port 21324 (or as configured).
 - Segment length = `count` (e.g. 268) — the packet always starts at WLED LED
   index 0 and always carries the whole chain; the offset only shifts it
-  circularly within the segment.
+  circularly within the segment, and the `gap` hole (D13) has no LEDs so it
+  does not change the segment length either.
 - PC and WLED on the same LAN; `wled.local` resolvable (mDNS) or use an IP.
 
 ## 12. Tests
@@ -453,7 +474,10 @@ One `Content` component with `mode: "main" | "config"`.
   `StartPoint` and used as the regression baseline for the 16 combos.
 - New: 16-combination start×direction truth table (against the §5.2 index
   table); midpoint split semantics; offset cases (0, +n, −n, wrap-around
-  `|offset| > count`, `count=490` ok, `491` rejected); grading order incl.
+  `|offset| > count`, `count=490` ok, `491` rejected); gap cases (D13:
+  `gap` 0..=50, `51` rejected, packet length stays `count`, seam-hole position
+  per start/direction, seam-edge sampling skips the creux, chain seam at the
+  creux edges); grading order incl.
   brightness; config TOML parse/validate (one test per error class);
   CLI>file>default merge precedence; reload apply (valid swap / invalid keeps
   old);

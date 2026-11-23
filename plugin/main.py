@@ -41,6 +41,7 @@ DEFAULTS = {
         "start": "bl",
         "direction": "clockwise",
         "offset": 0,
+        "gap": 0,
     },
     "processing": {
         "fps": 30.0,
@@ -59,7 +60,7 @@ DEFAULTS = {
 # error, like the daemon's deny_unknown_fields.
 SCHEMA = {
     "wled": ["host", "port", "timeout_s"],
-    "layout": ["top", "right", "bottom", "left", "start", "direction", "offset"],
+    "layout": ["top", "right", "bottom", "left", "start", "direction", "offset", "gap"],
     "processing": ["fps", "sample_height", "band_frac", "saturation", "gamma", "smooth", "brightness"],
     "behavior": ["on_no_session"],
     "capture": ["node_name", "start_paused"],
@@ -128,6 +129,7 @@ def _layout_args(layout):
         "--start", str(layout["start"]),
         "--direction", str(layout["direction"]),
         "--offset", str(int(layout["offset"])),
+        "--gap", str(int(layout["gap"])),
     ]
 
 
@@ -197,6 +199,7 @@ def validate(cfg):
     if direction is not None and direction not in DIRECTIONS:
         _err(errors, "layout.direction", direction, "clockwise|counterclockwise")
     _num(errors, "layout", "offset", layout.get("offset"), None, None, integer=True)
+    _num(errors, "layout", "gap", layout.get("gap"), 0, 50, integer=True)
 
     processing = cfg.get("processing", {})
     _num(errors, "processing", "fps", processing.get("fps"), 1, 240)
@@ -221,9 +224,9 @@ def validate(cfg):
         _err(errors, "capture.start_paused", start_paused, "a boolean")
 
     # Layout rules (SPEC §4.3/§5.2): count >= 1 and <= 490 (one DRGB
-    # packet; the offset is a circular shift of the loop and never
-    # lengthens the packet), and a midpoint start needs its edge to
-    # have at least 1 LED.
+    # packet; the offset is a circular shift of the loop and the gap is
+    # a hole without LEDs, so neither lengthens the packet), and a
+    # midpoint start needs its edge to have at least 1 LED.
     edges = {e: layout.get(e, DEFAULTS["layout"][e]) for e in ("top", "right", "bottom", "left")}
     if all(isinstance(v, int) for v in edges.values()):
         count = sum(edges.values())
@@ -462,7 +465,8 @@ class Plugin:
         """Start (or respawn) the --preview-strip process with the draft
         layout, so every change on the configuration screen has an
         immediate effect on the strip without writing the config file.
-        The draft is validated first; an invalid draft is not spawned."""
+        The draft is validated first; an invalid draft is not spawned.
+        The spawn command carries --top … --offset … --gap … as CLI flags."""
         global _preview_proc
         host = (host or "").strip()
         if not host:
@@ -497,8 +501,8 @@ class Plugin:
             _preview_proc = None
             return {"ok": False, "errors": [f"could not spawn {BINARY}: {e}"]}
         l = merged["layout"]
-        # The offset is a circular shift: the packet always carries the
-        # whole chain, so packet_len = count.
+        # The offset is a circular shift and the gap a hole without LEDs:
+        # the packet always carries the whole chain, so packet_len = count.
         return {"ok": True, "packet_len": sum(l[e] for e in ("top", "right", "bottom", "left"))}
 
     async def preview_stop(self):
