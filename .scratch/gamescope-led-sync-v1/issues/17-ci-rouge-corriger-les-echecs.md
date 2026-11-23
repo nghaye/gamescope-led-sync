@@ -25,12 +25,16 @@ racines, toutes diagnostiquées depuis les logs :
    docs/agents/domain.md:17, :28. Fix: `_active_`, `_runtime_`, ```text
    fences.
 
-**Status:** work in progress
+**Status:** done (commit a494553 on main)
 
-- [ ] justfile: plugin recipes use `./node_modules/.bin/biome` (+ npm ci
-      fallback); shell.nix drops pkgs.biome
-- [ ] `cargo fmt` whole crate; `cargo fmt --check` clean; tests green
-- [ ] `.gitignore` restored to the pinned tools content
-- [ ] SPEC.md / docs/agents/domain.md lint fixes
-- [ ] verify locally what can be (biome via node_modules, fmt, tests);
-      commit + push; watch the new Actions runs go green
+- [x] justfile: plugin recipes use `./node_modules/.bin/biome` (1.9.x pinned
+      by package-lock.json) + `npm ci` fallback when node_modules is missing;
+      shell.nix drops pkgs.biome (nixpkgs Biome is 2.x and rejects the 1.9
+      biome.json)
+- [x] `cargo fmt` whole crate (reload.rs/setup.rs drift); `cargo fmt --check`
+      clean; 128 tests pass; clippy 0 warnings
+- [x] `.gitignore` byte-identical to the tools repo at the pinned rev
+      (`.scratch/`); tracked tickets stay tracked, new ones need `git add -f`
+- [x] SPEC.md `_active_`/`_runtime_` (MD049) and ```text fences (MD040);
+      docs/agents/domain.md fences too
+- [x] committed (a494553) and pushed; new Actions runs watched
