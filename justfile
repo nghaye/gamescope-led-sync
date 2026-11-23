@@ -47,8 +47,12 @@ install-hooks:
 # the base recipes' root markers would no-op. These overrides replace them and
 # run the same tools in plugin/; the js and python CI workflows call the same
 # recipes through `nix develop`, so CI checks exactly what `just ci` checks.
-# The npm steps are skipped when plugin/node_modules is absent (a clean
-# checkout): CI and the Linux `just ci` run install-js-deps first.
+#
+# Biome comes from the plugin's own node_modules (`./node_modules/.bin/biome`,
+# the 1.9.x that package-lock.json pins), never from the nix dev shell: the
+# nixpkgs Biome is 2.x and rejects the 1.9 config schema. The js workflow's fmt
+# job runs no install step, so each recipe runs `npm ci` first when
+# node_modules is missing.
 
 # Install the plugin's JavaScript dependencies per package-lock.json
 [group('js')]
@@ -66,7 +70,8 @@ fmt-js:
   [ -f plugin/biome.json ] || exit 0
   {{ enter }}
   cd plugin
-  biome format --write .
+  [ -x node_modules/.bin/biome ] || npm ci
+  ./node_modules/.bin/biome format --write .
 
 # Report plugin formatting drift, changing nothing
 [group('js')]
@@ -75,7 +80,8 @@ fmt-check-js:
   [ -f plugin/biome.json ] || exit 0
   {{ enter }}
   cd plugin
-  biome format .
+  [ -x node_modules/.bin/biome ] || npm ci
+  ./node_modules/.bin/biome format .
 
 # Lint the plugin: Biome, then its package's `check` script (tsc + biome lint)
 [group('js')]
@@ -84,8 +90,9 @@ lint-js:
   [ -f plugin/biome.json ] || [ -f plugin/package.json ] || exit 0
   {{ enter }}
   cd plugin
-  if [ -f biome.json ]; then biome lint --error-on-warnings .; fi
-  if [ -d node_modules ]; then npm run --if-present check; fi
+  [ -d node_modules ] || npm ci
+  ./node_modules/.bin/biome lint --error-on-warnings .
+  npm run --if-present check
 
 # Build the plugin (dist/ is gitignored, built at install time) and run its
 # tests, if any
@@ -95,7 +102,9 @@ test-js:
   [ -f plugin/package.json ] || exit 0
   {{ enter }}
   cd plugin
-  if [ -d node_modules ]; then npm run --if-present test; npm run build; fi
+  [ -d node_modules ] || npm ci
+  npm run --if-present test
+  npm run build
 
 # Syntax-check the plugin's Python backend
 [group('python')]

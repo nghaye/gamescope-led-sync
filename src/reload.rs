@@ -27,7 +27,10 @@ pub struct Reloader {
 }
 
 fn sig_of(meta: &fs::Metadata) -> (SystemTime, u64) {
-    (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len())
+    (
+        meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        meta.len(),
+    )
 }
 
 impl Reloader {
@@ -133,14 +136,23 @@ pub fn log_changes(old: &Config, new: &Config) {
     if old.sample_height != new.sample_height {
         tracing::info!(
             "processing.sample_height: {} -> {}",
-            old.sample_height, new.sample_height
+            old.sample_height,
+            new.sample_height
         );
     }
     if old.band_frac != new.band_frac {
-        tracing::info!("processing.band_frac: {} -> {}", old.band_frac, new.band_frac);
+        tracing::info!(
+            "processing.band_frac: {} -> {}",
+            old.band_frac,
+            new.band_frac
+        );
     }
     if old.saturation != new.saturation {
-        tracing::info!("processing.saturation: {} -> {}", old.saturation, new.saturation);
+        tracing::info!(
+            "processing.saturation: {} -> {}",
+            old.saturation,
+            new.saturation
+        );
     }
     if old.gamma != new.gamma {
         tracing::info!("processing.gamma: {} -> {}", old.gamma, new.gamma);
@@ -149,7 +161,11 @@ pub fn log_changes(old: &Config, new: &Config) {
         tracing::info!("processing.smooth: {} -> {}", old.smooth, new.smooth);
     }
     if old.brightness != new.brightness {
-        tracing::info!("processing.brightness: {} -> {}", old.brightness, new.brightness);
+        tracing::info!(
+            "processing.brightness: {} -> {}",
+            old.brightness,
+            new.brightness
+        );
     }
     if old.on_no_session != new.on_no_session {
         tracing::info!(
@@ -242,7 +258,11 @@ mod tests {
         let mut r = Reloader::new(Some(path.clone()));
         let cur = Config::load(&path).unwrap();
         assert!(r.poll(&cur).is_none(), "no change right after startup");
-        fs::write(&path, "[wled]\nhost = \"b\"\nport = 2\n[processing]\nfps = 60\n").unwrap();
+        fs::write(
+            &path,
+            "[wled]\nhost = \"b\"\nport = 2\n[processing]\nfps = 60\n",
+        )
+        .unwrap();
         let new = r.poll(&cur).expect("a changed file must reload");
         assert_eq!(new.wled.as_deref(), Some("b"));
         assert_eq!(new.port, 2);

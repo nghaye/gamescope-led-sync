@@ -173,17 +173,17 @@ fn field_label(field: &str, layout: &Layout) -> (String, String) {
 
 /// Re-ask one layout field until it parses and the whole layout
 /// validates (§4.3 layout rules). Ok(None) on EOF.
-fn ask_layout_field(
-    io: &mut dyn Io,
-    field: &str,
-    layout: &Layout,
-) -> io::Result<Option<Layout>> {
+fn ask_layout_field(io: &mut dyn Io, field: &str, layout: &Layout) -> io::Result<Option<Layout>> {
     loop {
         let (label, default) = field_label(field, layout);
         let Some(line) = ask(io, &label, Some(&default))? else {
             return Ok(None);
         };
-        let raw = if line.is_empty() { default } else { line };
+        let raw = if line.is_empty() {
+            default
+        } else {
+            line
+        };
         let (mut top, mut right, mut bottom, mut left, mut start, mut direction) = (
             layout.top(),
             layout.right(),
@@ -240,16 +240,33 @@ fn ask_layout_field(
 /// The summary menu: modify one setting, test the strip, write the
 /// config, or quit. Ok(None) on EOF.
 fn ask_menu(io: &mut dyn Io) -> io::Result<Option<String>> {
-    ask(io, "choice: [m]odify, [t]est strip, [w]rite config, [q]uit", None)
+    ask(
+        io,
+        "choice: [m]odify, [t]est strip, [w]rite config, [q]uit",
+        None,
+    )
 }
 
 fn ask_field_name(io: &mut dyn Io) -> io::Result<Option<String>> {
     loop {
-        let Some(line) = ask(io, "which setting (wled top right bottom left start direction)", None)?
+        let Some(line) = ask(
+            io,
+            "which setting (wled top right bottom left start direction)",
+            None,
+        )?
         else {
             return Ok(None);
         };
-        if ["wled", "top", "right", "bottom", "left", "start", "direction"].contains(&line.as_str())
+        if [
+            "wled",
+            "top",
+            "right",
+            "bottom",
+            "left",
+            "start",
+            "direction",
+        ]
+        .contains(&line.as_str())
         {
             return Ok(Some(line));
         }
@@ -265,8 +282,11 @@ fn write_config(io: &mut dyn Io, path: &Path, host: &str, layout: &Layout) -> io
     Config::from_file_content(path, &text)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
     if path.exists() {
-        let Some(answer) =
-            ask(io, &format!("{} exists; overwrite? [y/N]", path.display()), None)?
+        let Some(answer) = ask(
+            io,
+            &format!("{} exists; overwrite? [y/N]", path.display()),
+            None,
+        )?
         else {
             return Ok(false);
         };
@@ -392,12 +412,20 @@ fn render_toml(host: &str, l: &Layout) -> String {
 /// discovery candidate (§4.1).
 fn target_path(explicit: Option<&Path>) -> PathBuf {
     explicit.map_or_else(
-        || default_config_path(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME")),
+        || {
+            default_config_path(
+                std::env::var_os("XDG_CONFIG_HOME"),
+                std::env::var_os("HOME"),
+            )
+        },
         Path::to_path_buf,
     )
 }
 
-fn default_config_path(xdg: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> PathBuf {
+fn default_config_path(
+    xdg: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> PathBuf {
     if let Some(xdg) = xdg {
         PathBuf::from(xdg).join("gamescope-led-sync/config.toml")
     } else if let Some(home) = home {
@@ -426,12 +454,18 @@ fn probe_wled_port(host: &str, port: u16) -> Result<String, String> {
     for addr in &addrs {
         match TcpStream::connect_timeout(addr, PROBE_TIMEOUT) {
             Ok(mut stream) => {
-                stream.set_read_timeout(Some(PROBE_TIMEOUT)).map_err(|e| e.to_string())?;
+                stream
+                    .set_read_timeout(Some(PROBE_TIMEOUT))
+                    .map_err(|e| e.to_string())?;
                 let request =
                     format!("GET /json/info HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
-                stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
+                stream
+                    .write_all(request.as_bytes())
+                    .map_err(|e| e.to_string())?;
                 let mut response = Vec::new();
-                stream.read_to_end(&mut response).map_err(|e| e.to_string())?;
+                stream
+                    .read_to_end(&mut response)
+                    .map_err(|e| e.to_string())?;
                 let text = String::from_utf8_lossy(&response);
                 let status = text.lines().next().unwrap_or("").trim().to_string();
                 if !status.contains(" 200") {
@@ -551,7 +585,12 @@ mod tests {
         let cfg = Config::from_file_content(Path::new("setup.toml"), &text).unwrap();
         assert_eq!(cfg.wled.as_deref(), Some("192.168.1.50"));
         assert_eq!(
-            (cfg.layout.top(), cfg.layout.right(), cfg.layout.bottom(), cfg.layout.left()),
+            (
+                cfg.layout.top(),
+                cfg.layout.right(),
+                cfg.layout.bottom(),
+                cfg.layout.left()
+            ),
             (86, 48, 86, 48)
         );
         assert_eq!(cfg.layout.start(), StartPoint::Bc);
@@ -576,10 +615,16 @@ mod tests {
 
     #[test]
     fn default_config_path_follows_the_lookup_order() {
-        let p = default_config_path(Some(OsString::from("/xdg")), Some(OsString::from("/home/u")));
+        let p = default_config_path(
+            Some(OsString::from("/xdg")),
+            Some(OsString::from("/home/u")),
+        );
         assert_eq!(p, PathBuf::from("/xdg/gamescope-led-sync/config.toml"));
         let p = default_config_path(None, Some(OsString::from("/home/u")));
-        assert_eq!(p, PathBuf::from("/home/u/.config/gamescope-led-sync/config.toml"));
+        assert_eq!(
+            p,
+            PathBuf::from("/home/u/.config/gamescope-led-sync/config.toml")
+        );
         let p = default_config_path(None, None);
         assert_eq!(p, PathBuf::from("/etc/gamescope-led-sync/config.toml"));
     }
@@ -590,7 +635,10 @@ mod tests {
         // left-to-right, right top-to-bottom, bottom right-to-left.
         let (red, green, blue, yellow) = ([255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]);
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 0).unwrap();
-        assert_eq!(test_pattern(&l), vec![yellow, yellow, red, red, green, green, blue, blue]);
+        assert_eq!(
+            test_pattern(&l),
+            vec![yellow, yellow, red, red, green, green, blue, blue]
+        );
         // A positive offset circularly shifts the chain two LEDs
         // forward along the loop, so blue wraps to the head.
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bl, Direction::Clockwise, 2).unwrap();
@@ -606,11 +654,17 @@ mod tests {
         let path = dir.join("config.toml");
         let mut io = Scripted::new(&[
             "192.168.1.50", // host (probe answers OK)
-            "", "", "", "", // keep the default counts 132/75/132/75
-            "bc", "clockwise", // start, direction
-            "t",               // test the strip
-            "m", "top", "100", // modify top to 100
-            "w",               // write (no existing file: no confirmation)
+            "",
+            "",
+            "",
+            "", // keep the default counts 132/75/132/75
+            "bc",
+            "clockwise", // start, direction
+            "t",         // test the strip
+            "m",
+            "top",
+            "100", // modify top to 100
+            "w",   // write (no existing file: no confirmation)
         ]);
         let mut probes = Vec::new();
         let mut probe = |host: &str| {
@@ -671,7 +725,11 @@ mod tests {
         let outcome = converse(&mut io, &mut probe, &mut no_strip, &path, None).unwrap();
         assert!(matches!(outcome, Outcome::Quit));
         assert_eq!(calls, vec!["bad.host".to_string()], "probed exactly once");
-        assert!(io.out.contains("not reachable: no route to host"), "{}", io.out);
+        assert!(
+            io.out.contains("not reachable: no route to host"),
+            "{}",
+            io.out
+        );
         assert!(!path.exists());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -721,7 +779,10 @@ mod tests {
         let l = Layout::new(1, 1, 1, 1, StartPoint::Bl, Direction::Clockwise, 0).unwrap();
         let mut io = Scripted::new(&[]);
         assert!(write_config(&mut io, &path, "10.0.0.9", &l).unwrap());
-        assert_eq!(Config::load(&path).unwrap().wled.as_deref(), Some("10.0.0.9"));
+        assert_eq!(
+            Config::load(&path).unwrap().wled.as_deref(),
+            Some("10.0.0.9")
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -789,7 +850,8 @@ mod tests {
         let port = wled.local_addr().unwrap().port();
         // A 500 ms read timeout ends the receive loop shortly after the
         // final black frame (the pattern is sent every 250 ms).
-        wled.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+        wled.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
         let receiver = thread::spawn(move || {
             let mut packets = Vec::new();
             let mut buf = [0u8; 2048];

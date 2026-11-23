@@ -17,7 +17,6 @@
   rustPlatform,
   pipewire,
   nodejs,
-  biome,
   python3,
 
   # just, and the formatters and linters for Nix, TOML, YAML, and Markdown,
@@ -36,12 +35,14 @@ mkShell {
       rustc
       rustfmt
 
-      # The Decky plugin (plugin/): npm for install/check/build, Biome for
-      # format/lint, python3 for the backend's syntax check. The js and
-      # python CI workflows run the just recipes that call these, through
-      # `nix develop`.
+      # The Decky plugin (plugin/): npm for install/check/build, python3 for
+      # the backend's syntax check. The js and python CI workflows run the
+      # just recipes that call these, through `nix develop`. Biome is NOT
+      # taken from nixpkgs on purpose: the plugin's biome.json is schema 1.9
+      # and package-lock.json pins @biomejs/biome 1.9.x, so the recipes call
+      # ./node_modules/.bin/biome — the nixpkgs Biome is 2.x and rejects the
+      # 1.9 config.
       nodejs
-      biome
       python3
     ]
     ++ lib.optionals stdenv.hostPlatform.isLinux [

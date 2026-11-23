@@ -25,7 +25,7 @@ scope for v1 (§15).
 | D2 | LED count / protocol cap | ≈ 270 LEDs (60/m). **490 max** (one DRGB packet) is a documented v1 constraint. DNRGB (>490, multi-packet) is out of scope v1. |
 | D3 | Start points | **8 start points** `bl bc br rc tr tc tl lc` (4 corners + 4 edge midpoints) × `direction` ∈ {`clockwise`, `counterclockwise`} viewed from the front = 16 combinations, unit-tested. |
 | D4 | Boot/session | SDDM + autologin → `systemd --user` available → user unit `gamescope-led-sync.service`, `WantedBy=default.target`. |
-| D5 | Behavior with no gamescope session | `on_no_session = "preset"`: while disconnected, send **nothing** → WLED falls back to its own preset after `timeout_s`. (During an *active* session with a static screen, the 1 s keepalive still runs, so WLED never drops to preset mid-game. A manual pause, §6.2, always releases the WLED — nothing is sent while paused.) |
+| D5 | Behavior with no gamescope session | `on_no_session = "preset"`: while disconnected, send **nothing** → WLED falls back to its own preset after `timeout_s`. (During an _active_ session with a static screen, the 1 s keepalive still runs, so WLED never drops to preset mid-game. A manual pause, §6.2, always releases the WLED — nothing is sent while paused.) |
 | D6 | Decky plugin privileges | **Non-root** (no `"root"` flag): the backend runs as the session user → `systemctl --user …` and writing `~/.config/…` work directly. |
 | D7 | Plugin UI language | **English**. |
 | D8 | v1 artifacts | `install.sh` + systemd user unit + Decky plugin. No Arch package/AUR in v1. |
@@ -46,7 +46,7 @@ no-session dropdown.
 
 ## 3. Repository layout (v1)
 
-```
+```text
 gamescope-led-sync/
   src/            # existing crate + new config.rs; geometry.rs extended
   deploy/
@@ -125,7 +125,7 @@ edge with 0 LEDs is rejected (§5.2); **unknown TOML keys are a
 hard error** (`deny_unknown_fields`) so typos cannot pass silently. Errors name
 the field, the value, and the bound. CLI validation exits with a clap-style
 error (exit code 2); an explicit `--config` pointing at a missing/unparseable
-file is fatal at startup (exit code 2); a bad file at *runtime* is logged and
+file is fatal at startup (exit code 2); a bad file at _runtime_ is logged and
 the previous config stays active (§7).
 
 ### 4.4 CLI surface (v1)
@@ -344,7 +344,7 @@ WantedBy=default.target
 
 ## 9. install.sh (idempotent)
 
-```
+```text
 install.sh [--binary PATH] [--enable]
 install.sh --uninstall
 ```
