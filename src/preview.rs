@@ -8,7 +8,7 @@
 //! preview shows what the counts, start point, direction, and offset do.
 //! When the start point is an edge midpoint (ticket 13), that edge is
 //! split at the loop's seam: its beginning keeps the edge color, its end
-//! is orange, so the two halves of the seam edge read differently and the
+//! is violet, so the two halves of the seam edge read differently and the
 //! circular offset is visible on the strip.
 
 use {
@@ -26,7 +26,7 @@ const TICK: Duration = Duration::from_millis(250);
 
 /// The test pattern: one solid color per edge, run through the same
 /// chain and offset math as the live colors (§5.2/§5.3). On a midpoint
-/// start edge, the end of the strip (the loop's seam) is orange.
+/// start edge, the end of the strip (the loop's seam) is violet.
 pub fn segment_pattern(l: &Layout) -> Vec<[u8; 3]> {
     geometry::edge_pattern(
         l,
@@ -36,7 +36,7 @@ pub fn segment_pattern(l: &Layout) -> Vec<[u8; 3]> {
             [255, 0, 0],   // bottom: red
             [0, 0, 255],   // left: blue
         ],
-        [255, 165, 0], // seam (end of the strip on a midpoint edge): orange
+        [143, 0, 255], // seam (end of the strip on a midpoint edge): violet
     )
 }
 
@@ -61,7 +61,7 @@ pub fn run(cfg: &Config) -> ExitCode {
     };
     let colors = segment_pattern(&cfg.layout);
     tracing::info!(
-        "--preview-strip: packet of {} LEDs, bottom red / left blue / top green / right yellow (seam orange on a midpoint start), sending to {}:{}",
+        "--preview-strip: packet of {} LEDs, bottom red / left blue / top green / right yellow (seam violet on a midpoint start), sending to {}:{}",
         cfg.layout.packet_len(),
         host,
         cfg.port,
@@ -117,28 +117,28 @@ mod tests {
         // bc clockwise: the chain starts in the middle of the bottom
         // edge, so the bottom edge is split at the loop's seam — the
         // beginning of the strip stays red, its end (the last chain
-        // positions) is orange.
+        // positions) is violet.
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bc, Direction::Clockwise, 0).unwrap();
-        let (red, green, blue, yellow, orange) = (
+        let (red, green, blue, yellow, violet) = (
             [255, 0, 0],
             [0, 255, 0],
             [0, 0, 255],
             [255, 255, 0],
-            [255, 165, 0],
+            [143, 0, 255],
         );
         // base = [L1,L0,T0,T1,R0,R1,B1,B0], s = nl+nt+nr+nb/2 = 7
         // -> chain = B0,L1,L0,T0,T1,R0,R1,B1; head run = [B0] (red),
-        // tail run = [B1] (orange).
+        // tail run = [B1] (violet).
         assert_eq!(
             segment_pattern(&l),
-            vec![red, blue, blue, green, green, yellow, yellow, orange]
+            vec![red, blue, blue, green, green, yellow, yellow, violet]
         );
         // Counterclockwise from bc starts at the other half of the bottom
-        // edge: chain = B1,R1,R0,T1,T0,L0,L1,B0 -> [red, y, y, g, g, b, b, orange].
+        // edge: chain = B1,R1,R0,T1,T0,L0,L1,B0 -> [red, y, y, g, g, b, b, violet].
         let l = Layout::new(2, 2, 2, 2, StartPoint::Bc, Direction::Counterclockwise, 0).unwrap();
         assert_eq!(
             segment_pattern(&l),
-            vec![red, yellow, yellow, green, green, blue, blue, orange]
+            vec![red, yellow, yellow, green, green, blue, blue, violet]
         );
     }
 
@@ -146,17 +146,17 @@ mod tests {
     fn midpoint_split_follows_the_odd_edge_halves_and_the_offset() {
         // bottom = 5, start = bc clockwise: s = nl+nt+nr+nb/2 = 5 in
         // base = [L0,T0,R0,B4,B3,B2,B1,B0], chain = [B2,B1,B0,L0,T0,R0,B4,B3].
-        // Head run = 3 red, tail run = 2 orange; offset +1 shifts the
+        // Head run = 3 red, tail run = 2 violet; offset +1 shifts the
         // whole loop one LED forward, seam colors included.
         let l = Layout::new(1, 1, 5, 1, StartPoint::Bc, Direction::Clockwise, 1).unwrap();
-        let (red, green, blue, yellow, orange) = (
+        let (red, green, blue, yellow, violet) = (
             [255, 0, 0],
             [0, 255, 0],
             [0, 0, 255],
             [255, 255, 0],
-            [255, 165, 0],
+            [143, 0, 255],
         );
-        let chain = [red, red, red, blue, green, yellow, orange, orange];
+        let chain = [red, red, red, blue, green, yellow, violet, violet];
         let want: Vec<[u8; 3]> = (0..8).map(|i| chain[(i + 8 - 1) % 8]).collect();
         assert_eq!(segment_pattern(&l), want);
     }

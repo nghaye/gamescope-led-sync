@@ -140,7 +140,7 @@ and debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip`
 (sends the per-segment test pattern — bottom red, left blue, top green,
 right yellow — to WLED until SIGTERM; used by the Decky plugin's
 configuration screen for the live preview; on a midpoint start edge the end
-of the strip is orange, so the loop's seam is visible), plus
+of the strip is violet, so the loop's seam is visible), plus
 `--setup`: interactive first-run setup that asks for the WLED host and the
 strip layout (LED counts per edge, start point, direction), probes the
 controller over HTTP (`GET /json/info`) when the host is entered, lights
@@ -434,7 +434,7 @@ One `Content` component with `mode: "main" | "config"`.
   daemon's `--preview-strip` mode, so the user sees the segments while
   editing their lengths. When the start point is an **edge midpoint** (ticket
   13), that edge is split at the loop's seam: the beginning of the strip
-  keeps the edge color, the end is **orange**, so the two halves of the seam
+  keeps the edge color, the end is **violet**, so the two halves of the seam
   edge read differently and the circular offset is visible on the strip.
 - Every draft change calls `preview_set` again (debounced 300 ms; the
   backend respawns the preview process with the new layout as CLI flags).
@@ -445,7 +445,9 @@ One `Content` component with `mode: "main" | "config"`.
   `DropdownItem` start point (8 **full-word** labels, no codes);
   `ToggleField` clockwise rotation (on = clockwise, off = counterclockwise);
   four numeric `TextField`s for the segment lengths (bottom, left, top,
-  right); a read-only `Field` with the total active LED count
+  right), each flanked by **−1 / +1** `ButtonItem`s that step the count
+  within the §4.3 bounds (no keyboard needed); a read-only `Field` with the
+  total active LED count
   (`top + right + bottom + left = N`, recomputed live); `SliderField`
   offset **−20 … +20, step 1** (D11); `SliderField` **gap 0 … 50, step 1**
   (D13: hole at the loop seam between the last and first LED, in LED pitches;
@@ -485,7 +487,7 @@ One `Content` component with `mode: "main" | "config"`.
   reload applies the pause flag on change) and the `--preview-strip`
   segment pattern (bottom red / left blue / top green / right yellow through
   `chain_edges` + `apply_offset`, incl. circular offset and the midpoint-seam
-  split: head run keeps the edge color, tail run is orange).
+  split: head run keeps the edge color, tail run is violet).
 - `--dump` / `--preview` grade with saturation + gamma + brightness, so the
   diagnostics match the LED output exactly.
 - New files must pass the existing `just` recipes (markdownlint on SPEC.md and

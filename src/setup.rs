@@ -342,7 +342,7 @@ fn converse(
                 io.say(
                     "lighting each edge in its own color for 3 s \
                      (top red, right green, bottom blue, left yellow; on a midpoint \
-                     start edge the strip's end is orange), then black...",
+                     start edge the strip's end is violet), then black...",
                 );
                 match strip(host.as_deref().unwrap_or(""), port, &layout) {
                     Ok(()) => io.say("strip test done"),
@@ -460,7 +460,7 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
 /// yellow), chained and offset exactly like the live colors, so the
 /// test also shows whether the counts and start/direction are right.
 /// On a midpoint start edge, the end of the strip (the loop's seam) is
-/// orange, so the two halves of that edge read differently.
+/// violet, so the two halves of that edge read differently.
 fn test_pattern(l: &Layout) -> Vec<[u8; 3]> {
     geometry::edge_pattern(
         l,
@@ -470,7 +470,7 @@ fn test_pattern(l: &Layout) -> Vec<[u8; 3]> {
             [0, 0, 255],   // bottom: blue
             [255, 255, 0], // left: yellow
         ],
-        [255, 165, 0], // seam (end of the strip on a midpoint edge): orange
+        [143, 0, 255], // seam (end of the strip on a midpoint edge): violet
     )
 }
 

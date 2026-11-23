@@ -243,6 +243,48 @@ function Content() {
     if (raw.trim() !== "" && !Number.isNaN(n)) patchDraft(section, key, n as Cfg[S][K]);
   };
 
+  // Step one segment's LED count by ±1 with the on-screen buttons, so fine
+  // adjustments need no keyboard. Clamped at the §4.3 bounds (each edge
+  // 0..=490, count 1..=490): at a bound the button does nothing.
+  const stepSegment = (key: "bottom" | "left" | "top" | "right", delta: 1 | -1) => {
+    if (!draft) return;
+    const cur = draft.layout[key];
+    const next = cur + delta;
+    if (next < 0 || next > 490) return;
+    const count = draft.layout.top + draft.layout.right + draft.layout.bottom + draft.layout.left;
+    const nextCount = count - cur + next;
+    if (nextCount < 1 || nextCount > 490) return;
+    patchDraft("layout", key, next);
+  };
+
+  // One segment row: a −1 button, the text field, a +1 button.
+  const segmentRow = (key: "bottom" | "left" | "top" | "right", label: string) => {
+    if (!draft) return null;
+    return (
+      <PanelSectionRow>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%" }}>
+          <div style={{ width: "56px", flexShrink: 0 }}>
+            <ButtonItem layout="below" onClick={() => stepSegment(key, -1)}>
+              −1
+            </ButtonItem>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <TextField
+              label={label}
+              value={String(draft.layout[key])}
+              onChange={(e) => patchDraftNum("layout", key, e.target.value)}
+            />
+          </div>
+          <div style={{ width: "56px", flexShrink: 0 }}>
+            <ButtonItem layout="below" onClick={() => stepSegment(key, 1)}>
+              +1
+            </ButtonItem>
+          </div>
+        </div>
+      </PanelSectionRow>
+    );
+  };
+
   const exitConfig = async (saveIt: boolean) => {
     if (previewTimer.current) clearTimeout(previewTimer.current);
     await callBackend("preview_stop");
@@ -432,34 +474,10 @@ function Content() {
             onChange={(on) => patchDraft("layout", "direction", on ? "clockwise" : "counterclockwise")}
           />
         </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField
-            label="LEDs on the bottom segment"
-            value={String(draft.layout.bottom)}
-            onChange={(e) => patchDraftNum("layout", "bottom", e.target.value)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField
-            label="LEDs on the left segment"
-            value={String(draft.layout.left)}
-            onChange={(e) => patchDraftNum("layout", "left", e.target.value)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField
-            label="LEDs on the top segment"
-            value={String(draft.layout.top)}
-            onChange={(e) => patchDraftNum("layout", "top", e.target.value)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField
-            label="LEDs on the right segment"
-            value={String(draft.layout.right)}
-            onChange={(e) => patchDraftNum("layout", "right", e.target.value)}
-          />
-        </PanelSectionRow>
+        {segmentRow("bottom", "LEDs on the bottom segment")}
+        {segmentRow("left", "LEDs on the left segment")}
+        {segmentRow("top", "LEDs on the top segment")}
+        {segmentRow("right", "LEDs on the right segment")}
         <PanelSectionRow>
           <Field
             label="Total active LEDs"

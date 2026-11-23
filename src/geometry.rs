@@ -1343,7 +1343,7 @@ mod tests {
     }
 
     #[test]
-    fn edge_pattern_splits_a_midpoint_seam_edge_head_red_tail_orange() {
+    fn edge_pattern_splits_a_midpoint_seam_edge_head_red_tail_seam() {
         // bc clockwise, 2 per edge: chain tags = [B,L,L,T,T,R,R,B]; the
         // head run [B] keeps bottom's color, the tail run [B] is the
         // seam color.

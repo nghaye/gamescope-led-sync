@@ -32,7 +32,7 @@ red, left blue, top green, right yellow** — using the daemon's
 `--preview-strip` mode, spawned by the backend with the current layout. When
 the start point is an **edge midpoint**, that edge is split at the loop's
 seam: the beginning of the strip keeps the segment color, the end is
-**orange**, so you can see the seam and the circular offset on the strip.
+**violet**, so you can see the seam and the circular offset on the strip.
 Every change (segment lengths, start point, direction, offset, gap, WLED host)
 **immediately respawns the preview** with the draft layout, so you can check
 the segment lengths on the strip itself. **Nothing is written to the config
@@ -41,8 +41,10 @@ the preview; «Cancel» leaves the screen without saving.
 
 Fields: WLED host/IP with a green **OK** / red **NOK** reachability indicator
 (probed on change), start point (8 full-word options, no codes), clockwise
-rotation switch (off = counterclockwise), the four segment LED counts with a
-live **total active LEDs** line, the offset slider (−20 … +20, step 1 — a
+rotation switch (off = counterclockwise), the four segment LED counts each
+flanked by **−1 / +1** buttons (stepping within the 0..=490 / count ≤ 490
+bounds, so no keyboard is needed) with a live **total active LEDs** line,
+the offset slider (−20 … +20, step 1 — a
 circular shift of the whole strip, the last LED being next to the first), the
 gap slider (0 … 50, step 1 — a hole at the loop seam between the last and
 first LED, e.g. a cable duct; the creux region is skipped when sampling the
