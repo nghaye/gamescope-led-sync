@@ -328,7 +328,7 @@ Wants=pipewire.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/gamescope-led-sync
+ExecStart=%h/.local/bin/gamescope-led-sync
 Restart=on-failure
 RestartSec=2s
 
@@ -351,7 +351,7 @@ install.sh --uninstall
 
 - Build: `cargo build --release --locked` if cargo is available and no
   `--binary` given.
-- Install binary → `/usr/bin/gamescope-led-sync` (`sudo install -m 0755`).
+- Install binary → `~/.local/bin/gamescope-led-sync` (plain `install -m 0755`, **no sudo** — the whole install is user-space: `~/.local/bin` + `~/.config`).
 - Config: copy `deploy/config.toml.example` →
   `~/.config/gamescope-led-sync/config.toml` **only if absent** (never
   overwrite a user config).
@@ -382,7 +382,7 @@ with the root environment, so `XDG_RUNTIME_DIR` and
 bus") — the backend fills them in (`_session_env()`, pointing at
 `/run/user/<uid>`) for each `--user` subprocess. Constants: `CONFIG =
 ~/.config/gamescope-led-sync/config.toml`, `BINARY =
-/usr/bin/gamescope-led-sync`, unit name `gamescope-led-sync`. Methods:
+~/.local/bin/gamescope-led-sync`, unit name `gamescope-led-sync`. Methods:
 
 | Method | Action |
 | ------ | ------ |

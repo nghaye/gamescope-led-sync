@@ -5,8 +5,8 @@
 #   install.sh --uninstall
 #
 # Without --binary, builds with `cargo build --release --locked` when cargo is
-# available. Installs the binary to /usr/bin/gamescope-led-sync (sudo install
-# -m 0755), copies deploy/config.toml.example to
+# available. Installs the binary to ~/.local/bin/gamescope-led-sync (plain
+# install -m 0755, no sudo), copies deploy/config.toml.example to
 # ~/.config/gamescope-led-sync/config.toml only if absent (never overwrites a
 # user config), installs the systemd user unit to ~/.config/systemd/user/ and
 # runs `systemctl --user daemon-reload`. --enable additionally runs
@@ -23,7 +23,7 @@ BINARY_NAME="gamescope-led-sync"
 UNIT_NAME="gamescope-led-sync.service"
 CONFIG_DIR="$HOME/.config/gamescope-led-sync"
 UNIT_DIR="$HOME/.config/systemd/user"
-SYSTEM_BINARY="/usr/bin/$BINARY_NAME"
+LOCAL_BINARY="$HOME/.local/bin/$BINARY_NAME"
 
 usage() {
   cat <<EOF
@@ -64,9 +64,9 @@ done
 if [ "$UNINSTALL" -eq 1 ]; then
   systemctl --user disable --now "$UNIT_NAME" 2>/dev/null || true
   rm -f "$UNIT_DIR/$UNIT_NAME"
-  sudo rm -f "$SYSTEM_BINARY"
+  rm -f "$LOCAL_BINARY"
   systemctl --user daemon-reload
-  echo "uninstalled $UNIT_NAME and $SYSTEM_BINARY"
+  echo "uninstalled $UNIT_NAME and $LOCAL_BINARY"
   echo "the config in $CONFIG_DIR/config.toml was kept"
   exit 0
 fi
@@ -85,7 +85,8 @@ if [ ! -f "$BINARY" ]; then
   exit 1
 fi
 
-sudo install -m 0755 "$BINARY" "$SYSTEM_BINARY"
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "$BINARY" "$LOCAL_BINARY"
 
 # Config: copy the example only if absent — never overwrite a user config.
 mkdir -p "$CONFIG_DIR"
@@ -105,6 +106,6 @@ if [ "$ENABLE" -eq 1 ]; then
   systemctl --user enable --now "$UNIT_NAME"
 fi
 
-echo "installed $SYSTEM_BINARY and $UNIT_DIR/$UNIT_NAME"
+echo "installed $LOCAL_BINARY and $UNIT_DIR/$UNIT_NAME"
 echo "enable at boot + start now: systemctl --user enable --now $UNIT_NAME"
 echo "logs: journalctl --user -u $UNIT_NAME -f"

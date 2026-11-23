@@ -33,7 +33,7 @@ cd gamescope-led-sync
 ./deploy/install.sh --enable
 ```
 
-`install.sh` is idempotent: it builds with `cargo build --release --locked` (or takes `--binary PATH`), installs the binary to `/usr/bin/gamescope-led-sync`, copies `deploy/config.toml.example` to `~/.config/gamescope-led-sync/config.toml` **only if absent**, installs the systemd user unit to `~/.config/systemd/user/gamescope-led-sync.service`, and with `--enable` runs `systemctl --user enable --now gamescope-led-sync`.
+`install.sh` is idempotent: it builds with `cargo build --release --locked` (or takes `--binary PATH`), installs the binary to `~/.local/bin/gamescope-led-sync` (no sudo — the whole install is user-space), copies `deploy/config.toml.example` to `~/.config/gamescope-led-sync/config.toml` **only if absent**, installs the systemd user unit to `~/.config/systemd/user/gamescope-led-sync.service`, and with `--enable` runs `systemctl --user enable --now gamescope-led-sync`.
 
 Uninstall with `./deploy/install.sh --uninstall`: it disables and stops the unit, removes the unit and the binary, and **keeps the config file**.
 
