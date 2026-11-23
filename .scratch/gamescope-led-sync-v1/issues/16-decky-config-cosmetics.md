@@ -20,7 +20,7 @@ README, plugin/README). The ±1 buttons are `ButtonItem layout="below"` in a
 flex row around the existing `TextField`, stepping through `patchDraft` with
 client-side clamping at the §4.3 bounds.
 
-**Status:** done (commit <hash> on main)
+**Status:** done (commit 543447b on main)
 
 - [x] `plugin/src/index.tsx`: `segmentRow()` renders each segment TextField
   flanked by −1 / +1 `ButtonItem`s; `stepSegment()` clamps at the §4.3 bounds
