@@ -16,6 +16,9 @@
   pkg-config,
   rustPlatform,
   pipewire,
+  nodejs,
+  biome,
+  python3,
 
   # just, and the formatters and linters for Nix, TOML, YAML, and Markdown,
   # from the tools repository, at the versions of the nixpkgs pinned here.
@@ -32,6 +35,14 @@ mkShell {
       clippy
       rustc
       rustfmt
+
+      # The Decky plugin (plugin/): npm for install/check/build, Biome for
+      # format/lint, python3 for the backend's syntax check. The js and
+      # python CI workflows run the just recipes that call these, through
+      # `nix develop`.
+      nodejs
+      biome
+      python3
     ]
     ++ lib.optionals stdenv.hostPlatform.isLinux [
       # Building the pipewire crate: pkg-config finds libpipewire, and the

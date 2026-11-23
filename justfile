@@ -39,3 +39,68 @@ run *ARGS:
 [group('all')]
 install-hooks:
   mkdir -p .git/hooks && printf '#!/bin/sh\nexec just ci\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && echo "installed .git/hooks/pre-commit (runs just ci on every commit)"
+
+# ----------------------------------- plugin -----------------------------------
+#
+# The Decky plugin (plugin/) is this repository's only JavaScript and Python:
+# its package.json, biome.json, and main.py live there, not at the root, so
+# the base recipes' root markers would no-op. These overrides replace them and
+# run the same tools in plugin/; the js and python CI workflows call the same
+# recipes through `nix develop`, so CI checks exactly what `just ci` checks.
+# The npm steps are skipped when plugin/node_modules is absent (a clean
+# checkout): CI and the Linux `just ci` run install-js-deps first.
+
+# Install the plugin's JavaScript dependencies per package-lock.json
+[group('js')]
+[script]
+install-js-deps:
+  [ -f plugin/package.json ] || exit 0
+  {{ enter }}
+  cd plugin
+  npm ci
+
+# Format the plugin's JavaScript/TypeScript sources
+[group('js')]
+[script]
+fmt-js:
+  [ -f plugin/biome.json ] || exit 0
+  {{ enter }}
+  cd plugin
+  biome format --write .
+
+# Report plugin formatting drift, changing nothing
+[group('js')]
+[script]
+fmt-check-js:
+  [ -f plugin/biome.json ] || exit 0
+  {{ enter }}
+  cd plugin
+  biome format .
+
+# Lint the plugin: Biome, then its package's `check` script (tsc + biome lint)
+[group('js')]
+[script]
+lint-js:
+  [ -f plugin/biome.json ] || [ -f plugin/package.json ] || exit 0
+  {{ enter }}
+  cd plugin
+  if [ -f biome.json ]; then biome lint --error-on-warnings .; fi
+  if [ -d node_modules ]; then npm run --if-present check; fi
+
+# Build the plugin (dist/ is gitignored, built at install time) and run its
+# tests, if any
+[group('js')]
+[script]
+test-js:
+  [ -f plugin/package.json ] || exit 0
+  {{ enter }}
+  cd plugin
+  if [ -d node_modules ]; then npm run --if-present test; npm run build; fi
+
+# Syntax-check the plugin's Python backend
+[group('python')]
+[script]
+test-python:
+  [ -f plugin/main.py ] || exit 0
+  {{ enter }}
+  python3 -m py_compile plugin/main.py

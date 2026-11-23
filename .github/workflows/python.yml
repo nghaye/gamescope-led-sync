@@ -1,0 +1,48 @@
+# The jobs live in the tools repository, as a reusable workflow; this file
+# holds the triggers. `just sync-tools` writes the commit below to match the
+# version of the tools input that flake.lock pins, and `nix flake check` fails
+# when the two differ.
+
+name: Python
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# The workflow runs when the plugin's Python backend changes, or a file that
+# changes what the recipes do: the flake, which pins the tools and the dev
+# shell's python3; the justfile, which overrides the python recipes for
+# plugin/main.py; and .gitignore, which decides the files the recipes see.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "plugin/main.py"
+      - ".github/workflows/python.yml"
+      - "flake.nix"
+      - "flake.lock"
+      - "shell.nix"
+      - "justfile"
+      - "base.just"
+      - ".gitignore"
+  pull_request:
+    branches:
+      - "*"
+    paths:
+      - "plugin/main.py"
+      - ".github/workflows/python.yml"
+      - "flake.nix"
+      - "flake.lock"
+      - "shell.nix"
+      - "justfile"
+      - "base.just"
+      - ".gitignore"
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    uses: larry0x/tools/.github/workflows/python.yml@702cf291e0a264e8c926feeeb3993785f6d925cc

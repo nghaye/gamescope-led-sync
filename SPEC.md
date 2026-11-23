@@ -489,8 +489,12 @@ One `Content` component with `mode: "main" | "config"`.
 - `--dump` / `--preview` grade with saturation + gamma + brightness, so the
   diagnostics match the LED output exactly.
 - New files must pass the existing `just` recipes (markdownlint on SPEC.md and
-  READMEs, yamllint on the unit file, tombi on TOML, biome via the plugin
-  template).
+  READMEs, yamllint on the unit file and the workflows, tombi on TOML, and —
+  for the Decky plugin — biome, `tsc`, the rollup build, and a `py_compile`
+  of `main.py`, via the js/python recipe overrides in the justfile). CI runs
+  them through the GitHub Actions workflows in `.github/workflows/` (rust,
+  markdown, nix, toml, yaml, js, python), which call the reusable workflows
+  of the tools repository pinned in flake.lock.
 - Manual E2E checklist in README: `install.sh --enable`, launch a game, verify
   LEDs; move the offset slider in Decky and see the shift within one frame;
   `--once --dump` + `--preview`; `--dry-run`.

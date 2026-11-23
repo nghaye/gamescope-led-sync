@@ -119,7 +119,8 @@ While no gamescope session is connected, `on_no_session` decides what is sent: `
 ## Development
 
 ```sh
-just ci        # fmt-check, clippy -D warnings, cargo test, markdown/toml/yaml/nix lints
+just ci        # fmt-check, clippy -D warnings, cargo test, nix/toml/yaml/markdown lints,
+               # plus the plugin: biome format/lint, tsc, rollup build, py_compile of main.py
 cargo test
 cargo run -- --help
 ```
