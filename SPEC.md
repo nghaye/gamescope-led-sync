@@ -522,7 +522,10 @@ whole flow works in Big Picture mode with a controller.
   and the repo root, then packs `dist/gamescope-led-sync-decky-<version>.zip`
   (root folder `gamescope-led-sync/`: `plugin.json`, `package.json`, `main.py`,
   `dist/*`, `payload/*`) + `.sha256`, and prints the content list and a checksum
-  verification. `plugin/payload/` and `dist/` are gitignored.
+  verification. `plugin/payload/` is gitignored via **`plugin/.gitignore`** and
+  `dist/` via the root `.gitignore` — never edit the root `.gitignore`: it is
+  one of the files `nix flake check` diffs against the tools repository at the
+  pinned commit, and a local change turns `nix / Lint + Test` red.
 - User install: import the zip in Decky Loader, open the plugin, press
   **Install service + binary** (§10.3). Later releases: import the new zip,
   then **Update** in the plugin (mismatch detected via `--version`).
