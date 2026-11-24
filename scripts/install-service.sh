@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# install.sh — idempotent install/uninstall of gamescope-led-sync (SPEC §9).
+# install-service.sh — idempotent install/uninstall of the gamescope-led-sync
+# service + binary, user-space only (SPEC §9/§11). This is the old
+# deploy/install.sh, moved to scripts/ when the Decky plugin became the main
+# install entry point; the artifacts it installs live in deploy/ and are
+# embedded into the plugin's payload by scripts/package-plugin.sh.
 #
-#   install.sh [--binary PATH] [--enable]
-#   install.sh --uninstall
+#   install-service.sh [--binary PATH] [--enable]
+#   install-service.sh --uninstall
 #
 # Without --binary, builds with `cargo build --release --locked` when cargo is
 # available. Installs the binary to ~/.local/bin/gamescope-led-sync (plain
@@ -19,6 +23,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEPLOY_DIR="$REPO_DIR/deploy"
 BINARY_NAME="gamescope-led-sync"
 UNIT_NAME="gamescope-led-sync.service"
 CONFIG_DIR="$HOME/.config/gamescope-led-sync"
@@ -27,8 +32,8 @@ LOCAL_BINARY="$HOME/.local/bin/$BINARY_NAME"
 
 usage() {
   cat <<EOF
-Usage: install.sh [--binary PATH] [--enable]
-       install.sh --uninstall
+Usage: install-service.sh [--binary PATH] [--enable]
+       install-service.sh --uninstall
 
   --binary PATH   install this prebuilt binary instead of building with cargo
   --enable        systemctl --user enable --now $UNIT_NAME after installing
@@ -91,7 +96,7 @@ install -m 0755 "$BINARY" "$LOCAL_BINARY"
 # Config: copy the example only if absent — never overwrite a user config.
 mkdir -p "$CONFIG_DIR"
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
-  install -m 0644 "$SCRIPT_DIR/config.toml.example" "$CONFIG_DIR/config.toml"
+  install -m 0644 "$DEPLOY_DIR/config.toml.example" "$CONFIG_DIR/config.toml"
   echo "installed example config to $CONFIG_DIR/config.toml"
 else
   echo "keeping existing $CONFIG_DIR/config.toml"
@@ -99,7 +104,7 @@ fi
 
 # systemd user unit.
 mkdir -p "$UNIT_DIR"
-install -m 0644 "$SCRIPT_DIR/$UNIT_NAME" "$UNIT_DIR/$UNIT_NAME"
+install -m 0644 "$DEPLOY_DIR/$UNIT_NAME" "$UNIT_DIR/$UNIT_NAME"
 systemctl --user daemon-reload
 
 if [ "$ENABLE" -eq 1 ]; then

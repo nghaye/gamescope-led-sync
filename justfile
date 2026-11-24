@@ -96,6 +96,16 @@ package-plugin:
   {{ enter }}
   bash scripts/package-plugin.sh
 
+# Package, then install everything from this checkout: the plugin into Decky
+# Loader (loader local API, no sudo) and the service + binary as the user
+# (scripts/install-all.sh; --uninstall removes both)
+[group('all')]
+[script]
+install-all *ARGS:
+  [ -f scripts/install-all.sh ] || exit 0
+  {{ enter }}
+  bash scripts/install-all.sh {{ ARGS }}
+
 # ----------------------------------- plugin -----------------------------------
 #
 # The Decky plugin (plugin/) is this repository's only JavaScript and Python:
