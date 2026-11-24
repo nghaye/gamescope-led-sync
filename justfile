@@ -14,12 +14,53 @@ import 'base.just'
 # Run every check: formatting, linters, and tests
 [group('all')]
 [linux]
-ci: fmt-check lint test
+ci: check-versions fmt-check lint test
 
 # Run every check that works on macOS: all but the Rust lint and tests
 [group('all')]
 [macos]
-ci: fmt-check lint-nix lint-toml lint-yaml lint-markdown test-nix
+ci: check-versions fmt-check lint-nix lint-toml lint-yaml lint-markdown test-nix
+
+# ---------------------------------- versioning ----------------------------------
+#
+# One version number for the whole deliverable (SPEC §11, D14): Cargo.toml is
+# the source of truth, and plugin/plugin.json + plugin/package.json carry the
+# same number, so the Decky plugin can compare its own version with the
+# installed binary's `--version` output and detect a mismatch. `bump-version`
+# writes all three at once; `check-versions` fails when they drift apart, and
+# both `ci` variants run it.
+
+# Fail when Cargo.toml, plugin/plugin.json and plugin/package.json disagree
+[group('all')]
+[script]
+check-versions:
+  [ -f Cargo.toml ] && [ -f plugin/plugin.json ] || exit 0
+  v_cargo="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+  v_plugin="$(python3 -c 'import json; print(json.load(open("plugin/plugin.json"))["version"])')"
+  v_pkg="$(python3 -c 'import json; print(json.load(open("plugin/package.json"))["version"])')"
+  if [ "$v_cargo" != "$v_plugin" ] || [ "$v_cargo" != "$v_pkg" ]; then
+    echo "version mismatch: Cargo.toml=$v_cargo plugin/plugin.json=$v_plugin plugin/package.json=$v_pkg" >&2
+    echo "fix the files by hand, or set all three at once: just bump-version $v_cargo" >&2
+    exit 1
+  fi
+  echo "version $v_cargo (Cargo.toml = plugin/plugin.json = plugin/package.json)"
+
+# Set the shared version X.Y.Z in Cargo.toml, plugin/plugin.json and
+# plugin/package.json, refreshing Cargo.lock and package-lock.json
+[group('all')]
+[script]
+bump-version VERSION:
+  [ -f Cargo.toml ] && [ -f plugin/plugin.json ] || exit 0
+  {{ enter }}
+  if ! [[ "{{ VERSION }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "VERSION must look like X.Y.Z, got '{{ VERSION }}'" >&2
+    exit 2
+  fi
+  sed -i 's/^version = ".*"/version = "{{ VERSION }}"/' Cargo.toml
+  sed -i 's/"version": ".*"/"version": "{{ VERSION }}"/' plugin/plugin.json
+  (cd plugin && npm version --no-git-tag-version "{{ VERSION }}")
+  cargo metadata --format-version 1 > /dev/null   # refresh Cargo.lock's package version
+  just check-versions
 
 # Build the release binary, into target/release (not into $PATH)
 [group('rust')]
