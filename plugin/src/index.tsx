@@ -1,12 +1,14 @@
-import { callable, definePlugin } from "@decky/api";
+import { callable, definePlugin, toaster } from "@decky/api";
 import manifest from "@decky/manifest";
 import {
   ButtonItem,
+  ConfirmModal,
   type DropdownOption,
   DropdownItem,
   Field,
   PanelSection,
   PanelSectionRow,
+  showModal,
   SliderField,
   staticClasses,
   TextField,
@@ -106,6 +108,37 @@ interface ProbeResult {
   error?: string;
 }
 
+// install_status (SPEC §11): the whole installation state — the plugin's own
+// version, the embedded payload, what is installed (binary/unit/config), the
+// service's run/enabled state, and the version match (update_needed is true
+// on a mismatch in either direction).
+interface InstallStatus {
+  ok: boolean;
+  plugin_version: string;
+  payload_present: boolean;
+  binary_installed: boolean;
+  binary_version: string | null;
+  unit_installed: boolean;
+  config_present: boolean;
+  ActiveState: string;
+  SubState: string;
+  active: boolean;
+  enabled: boolean;
+  versions_match: boolean | null;
+  update_needed: boolean;
+  error?: string | null;
+}
+
+// Return type of service_install / service_uninstall / service_update / start / stop.
+interface ActionResult {
+  ok: boolean;
+  error?: string | null;
+  steps?: string[];
+  from?: string | null;
+  to?: string;
+  config_kept?: string | null;
+}
+
 const sliderNum = (v: unknown): number => {
   if (typeof v === "number") return v;
   const target = (v as { target?: { value?: unknown } })?.target;
@@ -120,6 +153,9 @@ function Content() {
   const [capture, setCapture] = useState<CaptureStatus | null>(null);
   const [wled, setWled] = useState<WledStatus | null>(null);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [install, setInstall] = useState<InstallStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [installMsg, setInstallMsg] = useState("");
   const [configStatus, setConfigStatus] = useState("");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,21 +173,24 @@ function Content() {
   const refreshWled = () => {
     callBackend<WledStatus>("wled_status").then(setWled);
   };
+  const refreshInstall = () => {
+    callBackend<InstallStatus>("install_status").then(setInstall);
+  };
+  const refreshAll = () => {
+    refreshService();
+    refreshCapture();
+    refreshWled();
+    refreshInstall();
+  };
 
   useEffect(() => {
     callBackend<{ ok: boolean; config?: Cfg }>("get_config").then((res) => {
       if (res.ok && res.config) setCfg({ ...DEFAULTS, ...res.config });
     });
-    refreshService();
-    refreshCapture();
-    refreshWled();
-    // Poll the statuses so the main page tracks session start/end and
-    // WLED reachability on its own.
-    const t = setInterval(() => {
-      refreshService();
-      refreshCapture();
-      refreshWled();
-    }, 5000);
+    refreshAll();
+    // Poll the statuses so the main page tracks session start/end, WLED
+    // reachability and the installation state on its own.
+    const t = setInterval(refreshAll, 5000);
     return () => clearInterval(t);
   }, []);
 
@@ -176,6 +215,78 @@ function Content() {
     await callBackend("capture_set_paused", paused);
     refreshCapture();
     refreshService();
+  };
+
+  // --- installation section (SPEC §11) ---------------------------------------
+
+  const notify = (ok: boolean, label: string, body: string) =>
+    toaster.toast({ title: `Gamescope LED Sync — ${label}`, body, critical: !ok });
+
+  // Run a backend install action (install / update / uninstall) with the busy
+  // state, the on-page error line and a toast; then refresh every status.
+  const runAction = async (
+    method: "service_install" | "service_uninstall" | "service_update",
+    label: string,
+  ) => {
+    setBusy(true);
+    setInstallMsg("");
+    try {
+      const res = await callBackend<ActionResult>(method);
+      if (res.ok) {
+        notify(true, label, (res.steps ?? []).join("\n") || "done");
+      } else {
+        setInstallMsg(res.error ?? `${label} failed`);
+        notify(false, label, res.error ?? `${label} failed`);
+      }
+    } catch (e) {
+      setInstallMsg(String(e));
+      notify(false, label, String(e));
+    } finally {
+      setBusy(false);
+      refreshAll();
+    }
+  };
+
+  const startService = async () => {
+    setBusy(true);
+    try {
+      const res = await callBackend<ActionResult>("service_start");
+      if (!res.ok) {
+        setInstallMsg(res.error ?? "start failed");
+        notify(false, "Start", res.error ?? "start failed");
+      }
+    } finally {
+      setBusy(false);
+      refreshAll();
+    }
+  };
+
+  const stopService = async () => {
+    setBusy(true);
+    try {
+      const res = await callBackend<ActionResult>("service_stop");
+      if (!res.ok) {
+        setInstallMsg(res.error ?? "stop failed");
+        notify(false, "Stop", res.error ?? "stop failed");
+      }
+    } finally {
+      setBusy(false);
+      refreshAll();
+    }
+  };
+
+  // Uninstall asks for confirmation first; the config file is kept.
+  const askUninstall = () => {
+    showModal(
+      <ConfirmModal
+        strTitle="Uninstall the service and the binary?"
+        strDescription="Stops and disables gamescope-led-sync, then removes ~/.local/bin/gamescope-led-sync and the systemd user unit. The config file ~/.config/gamescope-led-sync/config.toml is kept."
+        strOKButtonText="Uninstall"
+        strCancelButtonText="Cancel"
+        bDestructiveWarning
+        onOK={() => runAction("service_uninstall", "Uninstall")}
+      />,
+    );
   };
 
   // --- configuration screen -------------------------------------------------
@@ -312,8 +423,121 @@ function Content() {
   const proc = cfg.processing;
   const captureOn = !!capture?.active && capture.state !== "paused";
 
+  // Installation state (SPEC §11): installed = binary + unit present. A
+  // version mismatch locks every control of the page except «Update» and
+  // «Uninstall»; `busy` locks everything while an action runs.
+  const installed = !!install && install.binary_installed && install.unit_installed;
+  const mismatch = !!install?.update_needed;
+  const locked = mismatch || busy;
+
+  const installSection = (
+    <PanelSection title="Installation">
+      <PanelSectionRow>
+        <Field
+          label="Plugin"
+          description={install?.payload_present ? "distributed zip — payload embedded" : "dev install — no embedded payload"}
+        >
+          {install ? `installed — v${install.plugin_version}` : "…"}
+        </Field>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <Field
+          label="Service + binary"
+          description={
+            install?.binary_installed
+              ? `unit ${install.unit_installed ? "present" : "missing"}, config ${install.config_present ? "present" : "missing"} — ${install.ActiveState}/${install.SubState}`
+              : "not installed"
+          }
+        >
+          {install
+            ? install.binary_installed
+              ? `installed — v${install.binary_version ?? "unknown"}`
+              : "not installed"
+            : "…"}
+        </Field>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <Field
+          label="Version check"
+          description={
+            install?.error ??
+            (mismatch ? "the installed version differs from the plugin's — update to align them" : "")
+          }
+        >
+          {!install
+            ? "…"
+            : mismatch
+              ? `update available: v${install.binary_version ?? "?"} → v${install.plugin_version}`
+              : installed
+                ? "up to date"
+                : "not installed"}
+        </Field>
+      </PanelSectionRow>
+      {installMsg !== "" && (
+        <PanelSectionRow>
+          <Field label="Last action">
+            <span style={{ whiteSpace: "pre-wrap", color: "#f44336" }}>{installMsg}</span>
+          </Field>
+        </PanelSectionRow>
+      )}
+      {!installed && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={busy || !install?.payload_present}
+            onClick={() => runAction("service_install", "Install")}
+          >
+            {busy ? "Working…" : "Install service + binary"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {installed && !mismatch && (
+        <>
+          <PanelSectionRow>
+            <ButtonItem layout="below" disabled={busy || install.active} onClick={startService}>
+              Start
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem layout="below" disabled={busy || !install.active} onClick={stopService}>
+              Stop
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
+      )}
+      {mismatch && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" disabled={busy} onClick={() => runAction("service_update", "Update")}>
+            {busy ? "Working…" : `Update to v${install.plugin_version}`}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {installed && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" disabled={busy} onClick={askUninstall}>
+            Uninstall…
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {installed && (
+        <PanelSectionRow>
+          <ToggleField
+            label="Start at boot"
+            description="systemctl --user enable / disable"
+            checked={install.enabled}
+            disabled={locked}
+            onChange={(on) => {
+              callBackend("service_set_enabled", on).then(() => refreshInstall());
+            }}
+          />
+        </PanelSectionRow>
+      )}
+    </PanelSection>
+  );
+
   const mainPage = (
     <>
+      {installSection}
       <PanelSection title="Status">
         <PanelSectionRow>
           <Field
@@ -362,7 +586,7 @@ function Content() {
           <ToggleField
             label="Capture"
             checked={captureOn}
-            disabled={!capture?.active}
+            disabled={!capture?.active || locked}
             onChange={(on) => setCapturePaused(!on)}
           />
         </PanelSectionRow>
@@ -371,6 +595,7 @@ function Content() {
             label="Capture at startup"
             description="saved in the config file; applied immediately on change"
             checked={!cfg.capture.start_paused}
+            disabled={locked}
             onChange={(on) => patch("capture", "start_paused", !on)}
           />
         </PanelSectionRow>
@@ -384,6 +609,7 @@ function Content() {
             max={1}
             step={0.01}
             value={proc.brightness}
+            disabled={locked}
             onChange={(v) => patch("processing", "brightness", sliderNum(v))}
           />
         </PanelSectionRow>
@@ -394,6 +620,7 @@ function Content() {
             max={2.5}
             step={0.05}
             value={proc.gamma}
+            disabled={locked}
             onChange={(v) => patch("processing", "gamma", sliderNum(v))}
           />
         </PanelSectionRow>
@@ -404,6 +631,7 @@ function Content() {
             max={3}
             step={0.05}
             value={proc.saturation}
+            disabled={locked}
             onChange={(v) => patch("processing", "saturation", sliderNum(v))}
           />
         </PanelSectionRow>
@@ -414,6 +642,7 @@ function Content() {
             max={1.0}
             step={0.05}
             value={proc.smooth}
+            disabled={locked}
             onChange={(v) => patch("processing", "smooth", sliderNum(v))}
           />
         </PanelSectionRow>
@@ -421,7 +650,7 @@ function Content() {
 
       <PanelSection title="Configuration">
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={enterConfig}>
+          <ButtonItem layout="below" disabled={locked} onClick={enterConfig}>
             Configuration
           </ButtonItem>
         </PanelSectionRow>
