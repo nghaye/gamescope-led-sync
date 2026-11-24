@@ -2,7 +2,12 @@
 
 Status: **locked after review with the project owner (2026-11-15)**. Every open
 question has a recorded decision in §2. Anything not written here is out of
-scope for v1 (§15).
+scope for v1 (§16).
+
+**Reopened 2026-11-24 (ticket 19):** the Decky plugin becomes the main install
+entry point — the distributed zip embeds the binary + unit + example config, and
+the plugin installs/updates/uninstalls the service from the Steam UI (D14, §10.3,
+§11).
 
 ## 1. Context and goals
 
@@ -34,6 +39,7 @@ scope for v1 (§15).
 | D11 | Offset slider range in the UI | **−20 … +20, step 1** (fixed range; ticket 10 narrowed it from −30…+30). |
 | D12 | Capture at startup | `[capture] start_paused = false` (bool): the daemon starts paused when `true` (the Decky «Capture at startup» switch); a change of the key also applies **immediately** on live reload (§7). CLI override: `--start-paused`. |
 | D13 | Seam hole (`gap`, ticket 14) | `gap` (0..=50, default 0) is a **hole at the loop seam**, in LED pitches, between the strip's **last and first LED** (owner's creux: a cable duct ≈ 7 LEDs wide at the bottom center, with `start="bc"`). The hole lies on the **seam edge**: that edge is divided into `n+gap` zones and the `gap` zones at the seam boundary are dropped, so no LED samples the screen region behind the creux. The packet length **stays `count`** (the WLED segment holds only real LEDs); `chain()`/`apply_offset()` are unchanged — the offset still rotates the `count`-LED chain, and wrapping across the seam naturally jumps the hole. UI: slider **0..50, step 1** in the configuration screen. |
+| D14 | Versioning & distribution (ticket 19, 2026-11-24) | **One version number X.Y.Z shared by the whole deliverable**: `Cargo.toml` is the source of truth; `just bump-version X.Y.Z` syncs `plugin/plugin.json` + `plugin/package.json` (and refreshes `Cargo.lock`/`package-lock.json`); `just check-versions` runs in `ci` and fails on drift. The binary's `--version` prints exactly `gamescope-led-sync X.Y.Z` (contract test in `tests/cli.rs`). The **distributed artifact** is the Decky plugin zip with an embedded `payload/` (`bin/gamescope-led-sync` x86_64 glibc release stripped, `systemd/gamescope-led-sync.service`, `config/config.toml.example`, `LICENSE`), built by `scripts/package-plugin.sh` into `dist/gamescope-led-sync-decky-<version>.zip` + `.sha256`. The plugin (non-root, D6) installs/updates/uninstalls the service + binary from `DECKY_PLUGIN_DIR/payload/`; the installed version is read from `~/.local/bin/gamescope-led-sync --version`; a mismatch **in either direction** means «Mettre à jour» and every other plugin control is disabled (§10.3). Dev path: `just package-plugin`, `just install-all` (§11). |
 
 Defaults chosen by default (flagged, correctable in the file): config example uses
 the 65" strip `top=86 right=48 bottom=86 left=48` (268 LEDs), `start="bc"`
@@ -48,13 +54,15 @@ no-session dropdown.
 
 ```text
 gamescope-led-sync/
-  src/            # existing crate + new config.rs; geometry.rs extended
-  deploy/
+  src/            # the crate
+  deploy/         # source artifacts embedded into the plugin payload
     gamescope-led-sync.service     # systemd user unit
     config.toml.example            # fully commented config
-    install.sh                     # idempotent install/uninstall
-  plugin/          # Decky plugin (official template: @decky/rollup + @decky/ui + @decky/api, install.sh)
-    plugin.json  package.json  rollup.config.mjs  main.py  src/index.tsx  README.md
+  scripts/        # package-plugin.sh (distributable zip) · install-all.sh (dev) · install-service.sh
+  plugin/         # Decky plugin (official template: @decky/rollup + @decky/ui + @decky/api)
+    plugin.json  package.json  rollup.config.mjs  main.py  decky-api.mjs  src/index.tsx  tests/  README.md
+    payload/      # filled by package-plugin.sh at packaging time (gitignored)
+  dist/           # distributable zip + sha256 (gitignored)
   SPEC.md          # this file
   README.md        # rewritten for the SteamOS deliverable
 ```
@@ -342,11 +350,15 @@ WantedBy=default.target
 - The daemon waits for the gamescope node (existing reconnect loop), so starting
   at boot before Steam is fine.
 
-## 9. install.sh (idempotent)
+## 9. scripts/install-service.sh (idempotent; dev/CLI path — D14)
+
+The main install path is the Decky plugin itself (§10.3, §11). This script
+remains for development and headless installs; `scripts/install-all.sh` calls
+it after installing the plugin (§11).
 
 ```text
-install.sh [--binary PATH] [--enable]
-install.sh --uninstall
+install-service.sh [--binary PATH] [--enable]
+install-service.sh --uninstall
 ```
 
 - Build: `cargo build --release --locked` if cargo is available and no
@@ -355,7 +367,8 @@ install.sh --uninstall
 - Config: copy `deploy/config.toml.example` →
   `~/.config/gamescope-led-sync/config.toml` **only if absent** (never
   overwrite a user config).
-- Unit: copy → `~/.config/systemd/user/gamescope-led-sync.service`, then
+- Unit: copy `deploy/gamescope-led-sync.service` →
+  `~/.config/systemd/user/gamescope-led-sync.service`, then
   `systemctl --user daemon-reload`.
 - `--enable`: `systemctl --user enable --now gamescope-led-sync`.
 - `--uninstall`: `systemctl --user disable --now`, remove unit + binary,
@@ -368,10 +381,11 @@ Based on the current official decky plugin template (`@decky/rollup` +
 `dist/index.js` as an ES module because `package.json` has `"type": "module"`,
 and `callBackend` no longer exists at runtime). `plugin.json`: name
 «Gamescope LED Sync», no `root` flag (D6), `api_version: 1` (instance methods,
-positional backend args), version 0.1.0. Install with `plugin/install.sh`
-(builds the frontend, then installs through the loader's local API — no sudo;
-`--direct` copies to `~/homebrew/plugins/gamescope-led-sync` with sudo and
-restarts `plugin_loader`). UI language: English (D7).
+positional backend args), version 0.1.0 (the shared number, D14). Install:
+import the distributed zip `dist/gamescope-led-sync-decky-<version>.zip` (§11)
+into Decky Loader — it carries the embedded `payload/` the plugin installs
+from (§10.3). Dev install from a checkout: `just install-all` (§11).
+UI language: English (D7).
 
 ### 10.1 Backend (`main.py`, `class Plugin`)
 
@@ -461,7 +475,71 @@ One `Content` component with `mode: "main" | "config"`.
 - `wled.timeout_s`, `wled.port`, `sample_height`, `behavior.on_no_session`,
   `capture.node_name`: file-only (D9/D12), documented in the plugin README.
 
-## 11. WLED prerequisites (documented in README)
+### 10.3 Installation from the plugin (ticket 19, D14)
+
+The plugin is the install entry point: the zip embeds `payload/` (binary +
+unit + example config + LICENSE) and the backend installs from
+`DECKY_PLUGIN_DIR/payload/`, all user-space (D6, no sudo). Versioning: the
+plugin reads its own version from `plugin.json`; the installed version comes
+from `~/.local/bin/gamescope-led-sync --version` (one line `gamescope-led-sync
+X.Y.Z`); `update_needed` is true when they differ, **in either direction** (a
+downgrade is offered as an update too).
+
+Backend methods (in addition to the §10.1 table):
+
+| Method | Action |
+| ------ | ------ |
+| `install_status()` | `{ok, plugin_version, payload_present, binary_installed, binary_version, unit_installed, config_present, ActiveState, SubState, active, enabled, versions_match, update_needed, error?}` — the whole state of the Installation section. |
+| `service_install()` | Copies `payload/bin/…` → `~/.local/bin` (atomic temp+rename, 0755), `payload/systemd/…` → `~/.config/systemd/user` (0644), example config → the config path **only if absent** (never overwrites), `payload/LICENSE` → `~/.local/share/gamescope-led-sync/LICENSE`; then `daemon-reload` and `enable --now` (install = enabled at boot + running). Idempotent; a lock refuses concurrent runs. Fails with a dev hint when the payload is absent. |
+| `service_update()` | Stop if active → back the old binary up to `.bak` → atomic replace of binary + unit → `daemon-reload` → re-enable / restart exactly as before. On failure after the replacement the `.bak` is restored (rollback; the rename consumes the `.bak`); on success the `.bak` is removed. Returns `{ok, from, to, steps, error?}`. |
+| `service_uninstall()` | `disable --now` (best effort), remove unit + binary (+ any `.bak`), `daemon-reload`. **The config file is kept.** |
+
+Frontend: a new **Installation** section on top of the main page (polled every
+5 s with the other statuses): `Field`s Plugin («installed — vX», payload
+present / dev mode), Service + binary (installed — vX / not installed, unit +
+config presence, ActiveState/SubState), Version check («up to date» /
+«update available: vA → vB»); an on-page error line; and the buttons per
+state:
+
+| state | active controls |
+| ----- | --------------- |
+| not installed | **Install service + binary** (disabled, with a hint, when the payload is absent — dev install) |
+| installed, versions match | **Start** / **Stop** (per active state), **Start at boot** toggle (`service_set_enabled`), **Uninstall…** |
+| installed, mismatch (either direction) | **Update to vX** + **Uninstall…** only — every other control of the page (Capture, Image, Configuration) is disabled |
+
+Uninstall opens a `ConfirmModal` first (the config is kept). Actions set a busy
+state, show a decky toaster on success/failure, and refresh all statuses. All
+controls are gamepad-navigable (ButtonItem / ToggleField / SliderField), so the
+whole flow works in Big Picture mode with a controller.
+
+## 11. Distribution — package zip + dev install (ticket 19, D14)
+
+- `scripts/package-plugin.sh` (`just package-plugin`): checks the shared
+  version (`just check-versions`), `cargo build --release --locked` + `strip`,
+  `npm ci` + `npm run build` in `plugin/`, fills `plugin/payload/`
+  (`bin/gamescope-led-sync` 0755, `systemd/gamescope-led-sync.service`,
+  `config/config.toml.example`, `LICENSE`) from `target/release/`, `deploy/`
+  and the repo root, then packs `dist/gamescope-led-sync-decky-<version>.zip`
+  (root folder `gamescope-led-sync/`: `plugin.json`, `package.json`, `main.py`,
+  `dist/*`, `payload/*`) + `.sha256`, and prints the content list and a checksum
+  verification. `plugin/payload/` and `dist/` are gitignored.
+- User install: import the zip in Decky Loader, open the plugin, press
+  **Install service + binary** (§10.3). Later releases: import the new zip,
+  then **Update** in the plugin (mismatch detected via `--version`).
+- Dev install: `scripts/install-all.sh` (`just install-all`) =
+  `package-plugin.sh` → install the plugin through the loader's local API
+  (`plugin/decky-api.mjs`, no sudo, no loader restart) →
+  `scripts/install-service.sh --binary target/release/gamescope-led-sync
+  --enable`. `--uninstall` removes the plugin through the API and runs
+  `install-service.sh --uninstall` (config kept).
+- CI (`.github/workflows/package.yml`): on push to main and
+  workflow_dispatch, runs `just package-plugin` on Ubuntu, verifies the zip
+  (payload entries present, embedded binary executable, sha256 ok) and uploads
+  the zip + `.sha256` as workflow artifacts. No automatic publish.
+- Target: x86_64 Linux glibc (SteamOS; libpipewire from the system), single
+  platform, release profile (lto, debug=false) + `strip`.
+
+## 12. WLED prerequisites (documented in README)
 
 - UDP realtime enabled, protocol **DRGB**, port 21324 (or as configured).
 - Segment length = `count` (e.g. 268) — the packet always starts at WLED LED
@@ -470,7 +548,7 @@ One `Content` component with `mode: "main" | "config"`.
   does not change the segment length either.
 - PC and WLED on the same LAN; `wled.local` resolvable (mDNS) or use an IP.
 
-## 12. Tests
+## 13. Tests
 
 - Existing `geometry.rs` / `output.rs` unit tests kept; corner tests ported to
   `StartPoint` and used as the regression baseline for the 16 combos.
@@ -501,7 +579,7 @@ One `Content` component with `mode: "main" | "config"`.
   LEDs; move the offset slider in Decky and see the shift within one frame;
   `--once --dump` + `--preview`; `--dry-run`.
 
-## 13. README rewrite (v1)
+## 14. README rewrite (v1)
 
 Objective (65" TV, CachyOS/gamescope/BC250, WLED), the 4-step pipeline (kept),
 requirements (Linux, PipeWire user session, systemd --user, WLED with DRGB,
@@ -512,10 +590,10 @@ notes (DRGB, 490 cap, DNRGB = future), troubleshooting (journalctl, --once
 --dump, --dry-run), development (`just ci`, tests). Remove the dead `../python`
 reference from `main.rs` doc comments and the «100-inch TV» wording.
 
-## 14. Dead code / cleanups folded into v1
+## 15. Dead code / cleanups folded into v1
 
 - `src/main.rs:8` doc reference to `../python` (absent) → delete.
-- `README.md` «early WIP» / 100-inch → rewrite (§13).
+- `README.md` «early WIP» / 100-inch → rewrite (§14).
 - `Cargo.toml` version `0.0.0` → `0.1.0`.
 - Validation factored out of clap attributes into `Config::validate()` (§4.3).
 - `--counterclockwise` → `--direction`; `--start` gains the 4 midpoint codes;
@@ -523,7 +601,7 @@ reference from `main.rs` doc comments and the «100-inch TV» wording.
 - `main.rs` no longer exits when `WledSender::new` fails — senderless retry
   instead (§6.0); same for an unresolvable host after a reload (§7).
 
-## 15. Out of scope for v1
+## 16. Out of scope for v1
 
 - > 490 LEDs (WLED DNRGB multi-packet with start index) — revisit if the strip
   grows.
@@ -534,7 +612,7 @@ reference from `main.rs` doc comments and the «100-inch TV» wording.
   ever changes, fallback = XDG autostart `.desktop`.
 - HDR-aware color science beyond saturation/gamma/brightness.
 
-## 16. Audit trail — second pass (2026-11-15)
+## 17. Audit trail — second pass (2026-11-15)
 
 The spec was re-read as an implementer; the following details were ambiguous and
 are now locked where indicated:
@@ -553,14 +631,14 @@ are now locked where indicated:
    one gamescope node are unsupported) (§6.0, §10.1).
 8. WLED segment-length hint: the plugin shows `L = count` (the offset is a
    circular shift, so the packet length never changes) and highlights it when
-   it changes (§10.2, §11).
-9. `--dump`/`--preview` grade with saturation + gamma + brightness (§12).
+   it changes (§10.2, §12).
+9. `--dump`/`--preview` grade with saturation + gamma + brightness (§13).
 10. No config schema-version key in v1; unknown keys are hard errors (§4.2).
 11. `[capture] node_name = "gamescope"` added as an advanced, file-only escape
     hatch in case a setup names its PipeWire node differently (§4.2).
 12. Numeric fields in Decky = `TextField` with numeric validation (@decky/ui
     has no dedicated number field) — already in §10.2, restated here.
-13. New files must pass the existing lint/format recipes (§12).
+13. New files must pass the existing lint/format recipes (§13).
 14. Below the four per-edge LED count fields, the plugin shows a read-only,
     non-editable total LED count (`top + right + bottom + left`), recomputed
     live (§10.2).

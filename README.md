@@ -26,16 +26,36 @@ One small Rust binary links libpipewire and runs on Linux, with near-zero cost t
 
 ## Install
 
-Clone [this repository](https://github.com/nghaye/gamescope-led-sync), then:
+The main path is the **Decky plugin zip**, which embeds the prebuilt binary, the
+systemd user unit, an example config and the license:
+
+1. Get `gamescope-led-sync-decky-<version>.zip` (built by `just package-plugin`
+   from a checkout of [this repository](https://github.com/nghaye/gamescope-led-sync),
+   into `dist/`, with a `.sha256` next to it).
+2. In Steam, open **Decky Loader → Settings → install a plugin zip** and import
+   the zip.
+3. Open the **Gamescope LED Sync** plugin and press **Install service + binary**
+   (Big Picture, controller only): the plugin copies the binary to
+   `~/.local/bin/gamescope-led-sync`, the unit to
+   `~/.config/systemd/user/gamescope-led-sync.service`, the example config to
+   `~/.config/gamescope-led-sync/config.toml` (only if absent), then
+   `daemon-reload` + `enable --now`. No sudo — everything is user-space.
+
+The plugin's **Installation** section shows the plugin version, the installed
+version, and whether they match; on a mismatch (new zip imported, old service
+installed — or the reverse) only **Update** and **Uninstall** stay enabled.
+**Update** stops the service if running, replaces binary + unit (with a `.bak`
+backup and rollback on failure), and restarts it as before. **Uninstall**
+(after a confirmation) removes the unit and the binary and **keeps the config
+file**.
+
+For development / headless installs from a clone:
 
 ```sh
-cd gamescope-led-sync
-./deploy/install.sh --enable
+just install-all        # build + install the plugin (loader local API, no sudo) + service + binary
+just package-plugin     # build only the distributable zip into dist/
+scripts/install-service.sh --uninstall   # remove service + binary (config kept)
 ```
-
-`install.sh` is idempotent: it builds with `cargo build --release --locked` (or takes `--binary PATH`), installs the binary to `~/.local/bin/gamescope-led-sync` (no sudo — the whole install is user-space), copies `deploy/config.toml.example` to `~/.config/gamescope-led-sync/config.toml` **only if absent**, installs the systemd user unit to `~/.config/systemd/user/gamescope-led-sync.service`, and with `--enable` runs `systemctl --user enable --now gamescope-led-sync`.
-
-Uninstall with `./deploy/install.sh --uninstall`: it disables and stops the unit, removes the unit and the binary, and **keeps the config file**.
 
 ## Configuration
 
@@ -97,10 +117,10 @@ The perimeter is a cyclic list of `count = top+right+bottom+left` zones. The str
 
 `plugin/` is a [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin (no root flag; runs as the session user) with two pages:
 
-- **Main page**: status lines (service, capture, live FPS, WLED strip reachability — polled every 5 s), a **Capture** switch (SIGUSR1 pause/resume; while paused nothing is sent and the WLED is released), a **Capture at startup** switch (`[capture] start_paused`, persisted in the config file and applied immediately on change), the **Brightness / Gamma / Saturation / Smooth** sliders, and a **Configuration** button. Sliders and switches save on change (debounced 400 ms) and go live at the daemon's next tick, and are reloaded at boot.
+- **Main page**: an **Installation** section (plugin + installed versions, version check, and the Install / Start / Stop / Update / Uninstall buttons + «Start at boot» switch — everything gamepad-friendly), then status lines (service, capture, live FPS, WLED strip reachability — polled every 5 s), a **Capture** switch (SIGUSR1 pause/resume; while paused nothing is sent and the WLED is released), a **Capture at startup** switch (`[capture] start_paused`, persisted in the config file and applied immediately on change), the **Brightness / Gamma / Saturation / Smooth** sliders, and a **Configuration** button. Sliders and switches save on change (debounced 400 ms) and go live at the daemon's next tick, and are reloaded at boot.
 - **Configuration screen**: entering it pauses the capture (resumed on exit) and lights each of the 4 strip segments in its own color (bottom red, left blue, top green, right yellow) via the daemon's `--preview-strip` mode; when the start point is an edge midpoint, that edge is split at the loop's seam — beginning keeps the segment color, end is violet — so the circular offset is visible on the strip. Every change is previewed live on the strip but **written to the config file only on «Save and quit»** («Cancel» leaves without saving). Fields: WLED host/IP with a green OK / red NOK reachability check, start point (8 full-word options), clockwise rotation switch, per-segment LED counts each flanked by −1/+1 buttons, with a live total, offset slider (−20…+20, circular shift of the loop), gap slider (0…50, hole at the loop seam between the last and first LED — the creux is skipped when sampling the screen), screen band slider (1–20 %), FPS.
 
-`wled.timeout_s`, `wled.port`, `sample_height`, `behavior.on_no_session` and `capture.node_name` stay file-only. `deploy/install.sh` does **not** install the plugin — run `./plugin/install.sh` once as the normal user (no sudo: it installs through Decky Loader's local API; `--direct` falls back to a sudo copy + loader restart). See [plugin/README.md](./plugin/README.md).
+`wled.timeout_s`, `wled.port`, `sample_height`, `behavior.on_no_session` and `capture.node_name` stay file-only. The plugin is installed by importing its zip into Decky Loader (see _Install_ above); from a checkout, `just install-all` does everything. See [plugin/README.md](./plugin/README.md).
 
 ## Protocol notes
 
@@ -119,15 +139,18 @@ While no gamescope session is connected, `on_no_session` decides what is sent: `
 ## Development
 
 ```sh
-just ci        # fmt-check, clippy -D warnings, cargo test, nix/toml/yaml/markdown lints,
-               # plus the plugin: biome format/lint, tsc, rollup build, py_compile of main.py
+just ci             # check-versions + fmt-check, clippy -D warnings, cargo test, nix/toml/yaml/markdown lints,
+                    # plus the plugin: biome format/lint, tsc, rollup build, py_compile + unit tests of main.py
+just package-plugin # build the distributable Decky zip (with embedded payload) into dist/
+just install-all    # build + install plugin (loader API) + service + binary from this checkout
+just bump-version 0.2.0   # set the shared version in Cargo.toml + plugin.json + package.json
 cargo test
 cargo run -- --help
 ```
 
-The unit tests cover the geometry truth table (16 start × direction combos), offset cases, color grading, config parse/validate, CLI > file > default precedence, and live reload; `tests/cli.rs` covers the exit-code-2 contract and the `--help` surface at the process level.
+The unit tests cover the geometry truth table (16 start × direction combos), offset cases, color grading, config parse/validate, CLI > file > default precedence, and live reload; `tests/cli.rs` covers the exit-code-2 contract, the `--version` line and the `--help` surface at the process level; `plugin/tests/` covers the install/update/uninstall logic of the plugin backend with a fake systemctl.
 
-Manual E2E checklist: `./deploy/install.sh --enable`; launch a game and verify the LEDs follow the screen edges; in the Decky plugin's configuration screen, change a segment length and see the colored preview update immediately, then «Save and quit» and watch the live capture resume with the new layout; try `--once --dump` + `--preview`; try `--dry-run`.
+Manual E2E checklist: `just install-all`; launch a game and verify the LEDs follow the screen edges; in the Decky plugin's configuration screen, change a segment length and see the colored preview update immediately, then «Save and quit» and watch the live capture resume with the new layout; try `--once --dump` + `--preview`; try `--dry-run`; in the plugin's Installation section, press Stop / Start, then re-import a rebuilt zip and press Update.
 
 ## License
 

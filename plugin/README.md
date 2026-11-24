@@ -3,10 +3,17 @@
 Decky Loader plugin for [gamescope-led-sync](https://github.com/nghaye/gamescope-led-sync):
 live configuration of the ambient LED backlight daemon that streams gamescope's
 capture to a WLED controller (SPEC §10). The plugin runs as the session user
-(_no root flag_, D6) and the UI is in English (D7). It has two pages.
+(_no root flag_, D6) and the UI is in English (D7). It has two pages, and the
+plugin is also the **install entry point** for the service + binary (§10.3,
+see _Install into Decky Loader, then install the service from the plugin_
+below).
 
 ## Main page
 
+- **Installation** (polled every 5 s): plugin version, installed binary
+  version, version check (a mismatch greys out every other control), and the
+  Install / Start / Stop / Update / Uninstall buttons plus the «Start at
+  boot» switch — see the install section below.
 - **Status** (polled every 5 s): service state, capture state (capturing /
   waiting for gamescope / paused / inactive), live FPS, and WLED strip
   reachability (HTTP probe of the configured host, `GET /json/info`).
@@ -69,32 +76,44 @@ npm ci            # or `npm install` when there is no package-lock.json
 npm run build     # rollup -> dist/index.js
 ```
 
-## Install into Decky Loader
+From the repository root, `just package-plugin` does all of it and more: it
+also builds the release binary (`cargo build --release --locked` + `strip`),
+fills `plugin/payload/` (gitignored) with `bin/gamescope-led-sync`,
+`systemd/gamescope-led-sync.service`, `config/config.toml.example` and
+`LICENSE`, and packs the **distributable zip**
+`dist/gamescope-led-sync-decky-<version>.zip` (+ `.sha256`), with the
+`gamescope-led-sync/` root folder the loader expects.
 
-`deploy/install.sh` installs only the daemon (binary + systemd unit + config)
-— the plugin is installed separately, **as the normal user, no sudo**:
+## Install into Decky Loader, then install the service from the plugin
 
-```sh
-./plugin/install.sh              # builds if dist/index.js is missing, then installs
-./plugin/install.sh --build      # force a rebuild first
-./plugin/install.sh --uninstall  # remove the plugin (data and settings kept)
-./plugin/install.sh --direct     # fallback: sudo copy + restart plugin_loader
-```
+1. Import the zip (`dist/gamescope-led-sync-decky-<version>.zip`) in the Steam
+   UI: **Decky Loader → Settings → install a plugin zip**. The loader unzips
+   it into `~/homebrew/plugins/gamescope-led-sync` — the embedded `payload/`
+   comes along.
+2. Open the plugin and press **Install service + binary** in the
+   **Installation** section (works in Big Picture with a controller): the
+   backend copies the payload's binary to `~/.local/bin/gamescope-led-sync`
+   (atomically, 0755), the unit to `~/.config/systemd/user/`, the example
+   config to `~/.config/gamescope-led-sync/config.toml` **only if absent**,
+   then `systemctl --user daemon-reload` + `enable --now`. No sudo (the plugin
+   runs as the session user).
 
-By default the script packs `plugin.json`, `package.json`, `main.py` and
-`dist/` into a zip and calls Decky Loader's own local API
+The Installation section also shows the plugin version and the installed
+binary's version (`--version`); when they differ, only **Update** and
+**Uninstall** stay enabled (every other control is greyed out).
+**Update** stops the service if running, backs the old binary up to `.bak`,
+replaces binary + unit, `daemon-reload`, and restarts as before (rollback from
+the `.bak` on failure). **Uninstall** (with a confirmation dialog) removes the
+unit and the binary and **keeps the config file**.
+
+From a checkout, `just install-all` does steps 1–2 automatically: it packages
+the zip, installs the plugin through the loader's own local API
 (`plugin/decky-api.mjs`: `GET 127.0.0.1:1337/auth/token` is unauthenticated on
 localhost, then `utilities/install_plugin` + `confirm_plugin_install` over
-`/ws` with the zip as a `file://` artifact). The loader — which runs as root —
-unzips into `~/homebrew/plugins/gamescope-led-sync`, fixes ownership and
-imports the plugin itself: no sudo, no loader restart, no Steam restart.
-`--direct` instead copies the files with `sudo` (the plugins dir is
-root-owned) and restarts the `plugin_loader` system service. The script is
-idempotent: run it again after editing the plugin to reinstall. Override the
-Decky home with `DECKY_HOME=...`.
+`/ws` with the zip as a `file://` artifact — no sudo, no loader restart), and
+installs the service + binary from the fresh release build
+(`scripts/install-service.sh --enable`). `just install-all --uninstall`
+removes both.
 
 Note: the served URLs use the plugin.json display name («Gamescope LED
 Sync», URL-encoded), not the install folder — see `src/index.tsx`.
-
-Manual alternative: build as above, then in the Steam UI open Decky Loader →
-developer mode → install a zip of this folder.
