@@ -33,7 +33,7 @@ DECKY_HOME="${DECKY_HOME:-$HOME/homebrew}"
 PLUGINS_DIR="$DECKY_HOME/plugins"
 DEST="$PLUGINS_DIR/$PLUGIN_DIR_NAME"
 LOADER_UNIT="plugin_loader"
-DAEMON_BINARY="/usr/bin/$PLUGIN_DIR_NAME"
+DAEMON_BINARY="$HOME/.local/bin/$PLUGIN_DIR_NAME"
 
 usage() {
   cat <<EOF

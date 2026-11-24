@@ -18,7 +18,7 @@ import tomllib
 from pathlib import Path
 
 CONFIG = Path.home() / ".config" / "gamescope-led-sync" / "config.toml"
-BINARY = "/usr/bin/gamescope-led-sync"
+BINARY = str(Path.home() / ".local" / "bin" / "gamescope-led-sync")
 UNIT = "gamescope-led-sync"
 
 # Plugin data dir, from the loader's DECKY_* env vars. The loader serves
