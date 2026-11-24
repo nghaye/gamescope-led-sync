@@ -1,0 +1,91 @@
+# Builds and verifies the distributable Decky plugin zip (SPEC §11, D14):
+# release binary + plugin frontend + embedded payload ->
+# dist/gamescope-led-sync-decky-<version>.zip (+ .sha256), uploaded as a
+# workflow artifact. Nothing is published automatically: import the zip
+# manually in Decky Loader, then press «Install» in the plugin.
+
+name: Package
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "plugin/**"
+      - "!plugin/node_modules/**"
+      - "!plugin/dist/**"
+      - "!plugin/payload/**"
+      - "scripts/**"
+      - "deploy/**"
+      - ".github/workflows/package.yml"
+      - "justfile"
+      - "base.just"
+      - ".gitignore"
+  pull_request:
+    branches:
+      - "*"
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "plugin/**"
+      - "!plugin/node_modules/**"
+      - "!plugin/dist/**"
+      - "!plugin/payload/**"
+      - "scripts/**"
+      - "deploy/**"
+      - ".github/workflows/package.yml"
+      - "justfile"
+      - "base.just"
+      - ".gitignore"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The crate links the system libpipewire; unzip/sha256sum verify the zip.
+      - name: system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpipewire-0.3-dev libpipewire-0.3-0 pkg-config unzip
+      - name: build the distributable zip
+        run: bash scripts/package-plugin.sh
+      - name: verify the zip
+        run: |
+          ZIP="$(ls dist/gamescope-led-sync-decky-*.zip)"
+          (cd dist && sha256sum -c "$(basename "$ZIP").sha256")
+          for entry in main.py plugin.json dist/index.js \
+                       payload/bin/gamescope-led-sync \
+                       payload/systemd/gamescope-led-sync.service \
+                       payload/config/config.toml.example \
+                       payload/LICENSE; do
+            unzip -l "$ZIP" | grep -q "gamescope-led-sync/$entry"
+          done
+          tmp="$(mktemp -d)"
+          unzip -q "$ZIP" -d "$tmp"
+          test -x "$tmp/gamescope-led-sync/payload/bin/gamescope-led-sync"
+          "$tmp/gamescope-led-sync/payload/bin/gamescope-led-sync" --version
+          rm -rf "$tmp"
+      - name: upload the zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamescope-led-sync-decky-plugin
+          path: |
+            dist/gamescope-led-sync-decky-*.zip
+            dist/gamescope-led-sync-decky-*.zip.sha256
