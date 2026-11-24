@@ -81,6 +81,21 @@ run *ARGS:
 install-hooks:
   mkdir -p .git/hooks && printf '#!/bin/sh\nexec just ci\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && echo "installed .git/hooks/pre-commit (runs just ci on every commit)"
 
+# -------------------------------- distribution ----------------------------------
+#
+# The distributable artifact is the Decky plugin zip with the embedded payload
+# (binary + systemd unit + example config + license): importing it into Decky
+# Loader gives the plugin everything it needs to install the service and the
+# binary on the Steam Deck, from the Steam UI, no sudo (SPEC §11).
+
+# Build the release binary + the plugin frontend, pack dist/…-decky-<version>.zip (+ .sha256)
+[group('all')]
+[script]
+package-plugin:
+  [ -f scripts/package-plugin.sh ] || exit 0
+  {{ enter }}
+  bash scripts/package-plugin.sh
+
 # ----------------------------------- plugin -----------------------------------
 #
 # The Decky plugin (plugin/) is this repository's only JavaScript and Python:

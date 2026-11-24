@@ -27,6 +27,10 @@ target/
 node_modules/
 dist/
 
+# The payload embedded in the distributable plugin zip: filled by
+# scripts/package-plugin.sh at packaging time, never committed
+plugin/payload/
+
 # Cloudflare's wrangler CLI
 .wrangler/
 
