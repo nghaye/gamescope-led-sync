@@ -1,0 +1,3 @@
+# The payload embedded in the distributable plugin zip: filled by
+# scripts/package-plugin.sh at packaging time, never committed
+payload/
