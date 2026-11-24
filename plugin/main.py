@@ -10,16 +10,37 @@ import http.client
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
 import tempfile
+import threading
 import tomllib
 from pathlib import Path
 
 CONFIG = Path.home() / ".config" / "gamescope-led-sync" / "config.toml"
 BINARY = str(Path.home() / ".local" / "bin" / "gamescope-led-sync")
 UNIT = "gamescope-led-sync"
+
+# The plugin's own install dir: the loader sets DECKY_PLUGIN_DIR to
+# ~/homebrew/plugins/gamescope-led-sync. The distributed zip ships the payload
+# it installs from under payload/ (SPEC §11).
+PLUGIN_DIR = Path(os.environ.get("DECKY_PLUGIN_DIR") or Path(__file__).resolve().parent)
+PAYLOAD = PLUGIN_DIR / "payload"
+PAYLOAD_BIN = PAYLOAD / "bin" / "gamescope-led-sync"
+PAYLOAD_UNIT = PAYLOAD / "systemd" / "gamescope-led-sync.service"
+PAYLOAD_CONFIG = PAYLOAD / "config" / "config.toml.example"
+PAYLOAD_LICENSE = PAYLOAD / "LICENSE"
+
+# Install targets — all user-space, no sudo (D6).
+BIN_DIR = Path.home() / ".local" / "bin"
+UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
+UNIT_FILE = UNIT_DIR / "gamescope-led-sync.service"
+LICENSE_DEST = Path.home() / ".local" / "share" / "gamescope-led-sync" / "LICENSE"
+
+# Serializes install/update/uninstall so two taps on a button cannot race.
+_install_lock = threading.Lock()
 
 # Plugin data dir, from the loader's DECKY_* env vars. The loader serves
 # /plugins/<plugin name>/data/... from DECKY_PLUGIN_RUNTIME_DIR
@@ -302,6 +323,58 @@ def _journalctl(*args):
     )
 
 
+_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+)")
+
+
+def _plugin_version():
+    """This plugin's own version, read from plugin.json next to main.py
+    (SPEC §11, D14): the same number Cargo.toml carried at packaging time."""
+    try:
+        with open(PLUGIN_DIR / "plugin.json", encoding="utf-8") as f:
+            return str(json.load(f).get("version") or "unknown")
+    except (OSError, ValueError):
+        return "unknown"
+
+
+def _binary_version():
+    """The installed binary's version, parsed from `<binary> --version` (one
+    line `gamescope-led-sync X.Y.Z`). None when the binary is missing, not
+    executable, or does not answer — the install is then treated as broken
+    and «Mettre à jour» is offered."""
+    if not (os.path.isfile(BINARY) and os.access(BINARY, os.X_OK)):
+        return None
+    try:
+        res = subprocess.run(
+            [BINARY, "--version"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if res.returncode != 0:
+        return None
+    m = _VERSION_RE.search(res.stdout)
+    return m.group(1) if m else None
+
+
+def _copy_atomic(src, dst, mode):
+    """Copy src to dst atomically: temp file in dst's directory, chmod, then
+    rename. Overwriting a running binary in place would fail with «text file
+    busy»; a rename never does."""
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dst.parent, prefix=f".{dst.name}-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as out, open(src, "rb") as inp:
+            shutil.copyfileobj(inp, out)
+        os.chmod(tmp, mode)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 class Plugin:
     """Backend methods called from the frontend via callBackend (SPEC §10.1)."""
 
@@ -380,6 +453,164 @@ class Plugin:
     async def service_restart(self):
         res = _systemctl("restart", UNIT)
         return {"ok": res.returncode == 0, "error": res.stderr.strip() or None}
+
+    async def install_status(self):
+        """The whole installation state, for the Installation section of the
+        main page (SPEC §11): this plugin's version, whether the embedded
+        payload is present (a dev install has none), what is installed on the
+        machine (binary + unit + config, and the binary's --version), the
+        service's run/enabled state, and whether the installed version matches
+        the plugin's — a mismatch in either direction means «Mettre à jour»."""
+        status = await self.service_status()
+        plugin_version = _plugin_version()
+        binary_present = os.path.isfile(BINARY) and os.access(BINARY, os.X_OK)
+        binary_version = _binary_version()
+        versions_match = binary_version == plugin_version if binary_present else None
+        return {
+            "ok": True,
+            "plugin_version": plugin_version,
+            "payload_present": PAYLOAD_BIN.is_file(),
+            "binary_installed": binary_present,
+            "binary_version": binary_version,
+            "unit_installed": UNIT_FILE.is_file(),
+            "config_present": CONFIG.is_file(),
+            "ActiveState": status.get("ActiveState", "unknown"),
+            "SubState": status.get("SubState", ""),
+            "active": status.get("ActiveState") == "active",
+            "enabled": bool(status.get("enabled")),
+            "versions_match": versions_match,
+            "update_needed": bool(binary_present and versions_match is False),
+            "error": status.get("error"),
+        }
+
+    async def service_install(self):
+        """Install the service + binary from the embedded payload (SPEC §11):
+        binary → ~/.local/bin (atomically, 0755), unit →
+        ~/.config/systemd/user (0644), example config →
+        ~/.config/gamescope-led-sync/config.toml only when absent (a user
+        config is never overwritten), LICENSE → ~/.local/share/…, then
+        daemon-reload and enable --now (install = enabled at boot + running).
+        Idempotent; refuses to run concurrently with another install."""
+        if not _install_lock.acquire(blocking=False):
+            return {"ok": False, "error": "an install/update is already running"}
+        try:
+            if not PAYLOAD_BIN.is_file():
+                return {
+                    "ok": False,
+                    "error": "no embedded payload — the plugin was installed in dev mode; from a checkout run: just install-all",
+                }
+            steps = []
+            _copy_atomic(PAYLOAD_BIN, BINARY, 0o755)
+            steps.append(f"binary → {BINARY}")
+            _copy_atomic(PAYLOAD_UNIT, UNIT_FILE, 0o644)
+            steps.append(f"unit → {UNIT_FILE}")
+            if not CONFIG.exists():
+                _copy_atomic(PAYLOAD_CONFIG, CONFIG, 0o644)
+                steps.append(f"example config → {CONFIG}")
+            if PAYLOAD_LICENSE.is_file():
+                _copy_atomic(PAYLOAD_LICENSE, LICENSE_DEST, 0o644)
+                steps.append(f"license → {LICENSE_DEST}")
+            r = _systemctl("daemon-reload")
+            if r.returncode != 0:
+                return {"ok": False, "error": f"daemon-reload failed: {r.stderr.strip()}", "steps": steps}
+            steps.append("systemctl --user daemon-reload")
+            r = _systemctl("enable", "--now", UNIT)
+            if r.returncode != 0:
+                return {"ok": False, "error": f"enable --now failed: {r.stderr.strip()}", "steps": steps}
+            steps.append("systemctl --user enable --now")
+            return {"ok": True, "version": _plugin_version(), "steps": steps}
+        finally:
+            _install_lock.release()
+
+    async def service_uninstall(self):
+        """Uninstall the service + binary (SPEC §11): disable --now (best
+        effort), remove the unit and the binary (plus any leftover .bak), then
+        daemon-reload. The config file is kept."""
+        if not _install_lock.acquire(blocking=False):
+            return {"ok": False, "error": "an install/update is already running"}
+        try:
+            _systemctl("disable", "--now", UNIT)
+            steps = ["systemctl --user disable --now (best effort)"]
+            for p in (UNIT_FILE, Path(BINARY), Path(f"{BINARY}.bak")):
+                if p.exists():
+                    p.unlink()
+                    steps.append(f"removed {p}")
+            r = _systemctl("daemon-reload")
+            if r.returncode != 0:
+                return {"ok": False, "error": f"daemon-reload failed: {r.stderr.strip()}", "steps": steps}
+            steps.append("systemctl --user daemon-reload")
+            return {
+                "ok": True,
+                "steps": steps,
+                "config_kept": str(CONFIG) if CONFIG.exists() else None,
+            }
+        finally:
+            _install_lock.release()
+
+    async def service_update(self):
+        """Update the installed service + binary to this plugin's embedded
+        payload (SPEC §11): stop the service when active, back the old binary
+        up to .bak, replace binary + unit atomically, daemon-reload, then
+        re-enable / restart exactly as before. When a step fails after the
+        replacement, the .bak is restored (rollback) and kept for inspection;
+        on success the .bak is removed. A version mismatch in either direction
+        is fixed the same way (downgrade included)."""
+        if not _install_lock.acquire(blocking=False):
+            return {"ok": False, "error": "an install/update is already running"}
+        try:
+            if not PAYLOAD_BIN.is_file():
+                return {
+                    "ok": False,
+                    "error": "no embedded payload — the plugin was installed in dev mode; from a checkout run: just install-all",
+                }
+            status = await self.service_status()
+            was_active = status.get("ActiveState") == "active"
+            was_enabled = bool(status.get("enabled"))
+            old_version = _binary_version()
+            steps = []
+            if was_active:
+                _systemctl("stop", UNIT)
+                steps.append("systemctl --user stop")
+            bak = Path(f"{BINARY}.bak")
+            if Path(BINARY).exists():
+                shutil.copy2(BINARY, bak)
+                steps.append(f"backup → {bak}")
+            try:
+                _copy_atomic(PAYLOAD_BIN, BINARY, 0o755)
+                steps.append(f"binary → {BINARY}")
+                _copy_atomic(PAYLOAD_UNIT, UNIT_FILE, 0o644)
+                steps.append(f"unit → {UNIT_FILE}")
+                if not CONFIG.exists():
+                    _copy_atomic(PAYLOAD_CONFIG, CONFIG, 0o644)
+                    steps.append(f"example config → {CONFIG}")
+                if PAYLOAD_LICENSE.is_file():
+                    _copy_atomic(PAYLOAD_LICENSE, LICENSE_DEST, 0o644)
+                r = _systemctl("daemon-reload")
+                if r.returncode != 0:
+                    raise RuntimeError(f"daemon-reload failed: {r.stderr.strip()}")
+                steps.append("systemctl --user daemon-reload")
+                if was_enabled:
+                    _systemctl("enable", UNIT)
+                    steps.append("systemctl --user enable")
+                if was_active:
+                    r = _systemctl("start", UNIT)
+                    if r.returncode != 0:
+                        raise RuntimeError(f"start failed: {r.stderr.strip()}")
+                    steps.append("systemctl --user start")
+            except Exception as e:
+                if bak.exists():
+                    # Atomic rename (a plain copy could hit «text file busy»);
+                    # the rollback consumes the .bak by design.
+                    os.replace(bak, BINARY)
+                    _systemctl("daemon-reload")
+                    if was_active:
+                        _systemctl("start", UNIT)
+                    steps.append("rollback: previous binary restored from .bak")
+                return {"ok": False, "error": str(e), "steps": steps}
+            bak.unlink(missing_ok=True)
+            return {"ok": True, "from": old_version, "to": _plugin_version(), "steps": steps}
+        finally:
+            _install_lock.release()
 
     async def capture_status(self):
         """Capture state: service ActiveState plus the capture phase parsed

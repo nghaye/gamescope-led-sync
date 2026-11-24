@@ -162,10 +162,11 @@ test-js:
   npm run --if-present test
   npm run build
 
-# Syntax-check the plugin's Python backend
+# Syntax-check the plugin's Python backend, then run its unit tests
 [group('python')]
 [script]
 test-python:
   [ -f plugin/main.py ] || exit 0
   {{ enter }}
   python3 -m py_compile plugin/main.py
+  python3 -m unittest discover -s plugin/tests -v
