@@ -15,7 +15,7 @@ import {
   TextField,
   ToggleField,
 } from "@decky/ui";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { FaLightbulb } from "react-icons/fa";
 
 // Decky Loader 3.x removed callBackend: with api_version 1, backend methods
@@ -76,6 +76,21 @@ const START_OPTIONS: DropdownOption[] = [
   { label: "Top-left corner", data: "tl" },
   { label: "Left-center", data: "lc" },
 ];
+
+// Compact numeric input (segment steppers, FPS): same height as the 32px
+// stepper buttons.
+const NUM_INPUT_STYLE: CSSProperties = {
+  width: "64px",
+  height: "32px",
+  flexShrink: 0,
+  boxSizing: "border-box",
+  textAlign: "center",
+  borderRadius: "4px",
+  border: "1px solid rgba(255, 255, 255, 0.25)",
+  background: "rgba(0, 0, 0, 0.3)",
+  color: "inherit",
+  fontSize: "14px",
+};
 
 interface CaptureStatus {
   ok: boolean;
@@ -388,18 +403,7 @@ function Content() {
               type="number"
               value={String(draft.layout[key])}
               onChange={(e) => patchDraftNum("layout", key, e.target.value)}
-              style={{
-                width: "64px",
-                height: "32px",
-                flexShrink: 0,
-                boxSizing: "border-box",
-                textAlign: "center",
-                borderRadius: "4px",
-                border: "1px solid rgba(255, 255, 255, 0.25)",
-                background: "rgba(0, 0, 0, 0.3)",
-                color: "inherit",
-                fontSize: "14px",
-              }}
+              style={NUM_INPUT_STYLE}
             />
             <Button style={{ width: "44px", height: "32px", flexShrink: 0 }} onClick={() => stepSegment(key, 1)}>
               +1
@@ -785,6 +789,7 @@ function Content() {
         <PanelSectionRow>
           <SliderField
             label={`Screen band (${Math.round(draft.processing.band_frac * 100)} %)`}
+            description="Share of the screen height sampled to color the edges: the top and bottom edges read the top and bottom bands, the left and right edges read the side bands. A higher band averages more screen rows into each LED."
             min={0.01}
             max={0.2}
             step={0.01}
@@ -793,15 +798,18 @@ function Content() {
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <TextField
-            label="FPS"
-            value={String(draft.processing.fps)}
-            onChange={(e) => patchDraftNum("processing", "fps", e.target.value)}
-          />
+          <Field label="FPS" childrenLayout="inline" verticalAlignment="center">
+            <input
+              type="number"
+              value={String(draft.processing.fps)}
+              onChange={(e) => patchDraftNum("processing", "fps", e.target.value)}
+              style={NUM_INPUT_STYLE}
+            />
+          </Field>
         </PanelSectionRow>
       </PanelSection>
 
-      <PanelSection title="Save">
+      <PanelSection>
         {configStatus !== "" && (
           <PanelSectionRow>
             <Field label="Status">
