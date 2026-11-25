@@ -1,6 +1,7 @@
 import { callable, definePlugin, toaster } from "@decky/api";
 import manifest from "@decky/manifest";
 import {
+  Button,
   ButtonItem,
   ConfirmModal,
   type DropdownOption,
@@ -368,30 +369,43 @@ function Content() {
     patchDraft("layout", key, next);
   };
 
-  // One segment row: a −1 button, the text field, a +1 button.
+  // One segment row: a compact −1 button, a narrow number field, a compact
+  // +1 button — all exactly 32px tall. Dialog-style Button (not the
+  // full-width ButtonItem) and a fixed-size native input keep the steppers
+  // small; the segment label sits on the row's Field.
   const segmentRow = (key: "bottom" | "left" | "top" | "right", label: string) => {
     if (!draft) return null;
     return (
       <PanelSectionRow>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%" }}>
-          <div style={{ width: "56px", flexShrink: 0 }}>
-            <ButtonItem layout="below" onClick={() => stepSegment(key, -1)}>
+        <Field label={label}>
+          <div
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", width: "100%" }}
+          >
+            <Button style={{ width: "44px", height: "32px", flexShrink: 0 }} onClick={() => stepSegment(key, -1)}>
               −1
-            </ButtonItem>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <TextField
-              label={label}
+            </Button>
+            <input
+              type="number"
               value={String(draft.layout[key])}
               onChange={(e) => patchDraftNum("layout", key, e.target.value)}
+              style={{
+                width: "64px",
+                height: "32px",
+                flexShrink: 0,
+                boxSizing: "border-box",
+                textAlign: "center",
+                borderRadius: "4px",
+                border: "1px solid rgba(255, 255, 255, 0.25)",
+                background: "rgba(0, 0, 0, 0.3)",
+                color: "inherit",
+                fontSize: "14px",
+              }}
             />
-          </div>
-          <div style={{ width: "56px", flexShrink: 0 }}>
-            <ButtonItem layout="below" onClick={() => stepSegment(key, 1)}>
+            <Button style={{ width: "44px", height: "32px", flexShrink: 0 }} onClick={() => stepSegment(key, 1)}>
               +1
-            </ButtonItem>
+            </Button>
           </div>
-        </div>
+        </Field>
       </PanelSectionRow>
     );
   };
@@ -430,6 +444,49 @@ function Content() {
   const mismatch = !!install?.update_needed;
   const locked = mismatch || busy;
 
+  // Status tones: ok = green, problem = red, neutral = gray.
+  const toneColor = (tone: "ok" | "bad" | "neutral") =>
+    tone === "ok" ? "#4caf50" : tone === "bad" ? "#f44336" : "#9e9e9e";
+
+  const serviceLabel = service ? `${service.ActiveState} / ${service.SubState}` : "unknown";
+  const serviceTone = !service
+    ? "neutral"
+    : service.ActiveState === "active"
+      ? "ok"
+      : service.ActiveState === "failed" || service.ActiveState === "inactive"
+        ? "bad"
+        : "neutral";
+
+  // The FPS count rides along with the capture state when it is active.
+  const captureLabel = !capture
+    ? "unknown"
+    : capture.state === "capturing"
+      ? `active${capture.fps != null ? ` (${Math.round(capture.fps)} fps)` : ""}`
+      : capture.state === "paused"
+        ? "paused"
+        : capture.state === "waiting"
+          ? "waiting for gamescope"
+          : "inactive (service not running)";
+  const captureTone = !capture
+    ? "neutral"
+    : capture.state === "capturing"
+      ? "ok"
+      : capture.state === "paused" || capture.state === "waiting"
+        ? "neutral"
+        : "bad";
+
+  const wledLabel = !wled
+    ? "…"
+    : wled.configured
+      ? wled.reachable
+        ? "reachable"
+        : "not reachable"
+      : "not configured";
+  const wledTone = !wled || !wled.configured ? "neutral" : wled.reachable ? "ok" : "bad";
+
+  // Version check: green when aligned, red on a mismatch, gray otherwise.
+  const versionTone = !install ? "neutral" : mismatch ? "bad" : installed ? "ok" : "neutral";
+
   const installSection = (
     <PanelSection title="Installation">
       <PanelSectionRow>
@@ -464,13 +521,15 @@ function Content() {
             (mismatch ? "the installed version differs from the plugin's — update to align them" : "")
           }
         >
-          {!install
-            ? "…"
-            : mismatch
-              ? `update available: v${install.binary_version ?? "?"} → v${install.plugin_version}`
-              : installed
-                ? "up to date"
-                : "not installed"}
+          <span style={{ color: toneColor(versionTone) }}>
+            {!install
+              ? "…"
+              : mismatch
+                ? `update available: v${install.binary_version ?? "?"} → v${install.plugin_version}`
+                : installed
+                  ? "up to date"
+                  : "not installed"}
+          </span>
         </Field>
       </PanelSectionRow>
       {installMsg !== "" && (
@@ -492,24 +551,19 @@ function Content() {
         </PanelSectionRow>
       )}
       {installed && !mismatch && (
-        <>
-          <PanelSectionRow>
-            <ButtonItem layout="below" disabled={busy || install.active} onClick={startService}>
-              Start
-            </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem layout="below" disabled={busy || !install.active} onClick={stopService}>
-              Stop
-            </ButtonItem>
-          </PanelSectionRow>
-        </>
-      )}
-      {mismatch && (
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy} onClick={() => runAction("service_update", "Update")}>
-            {busy ? "Working…" : `Update to v${install.plugin_version}`}
-          </ButtonItem>
+          <div style={{ display: "flex", gap: "8px", width: "100%" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <ButtonItem layout="below" disabled={busy || install.active} onClick={startService}>
+                Start
+              </ButtonItem>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <ButtonItem layout="below" disabled={busy || !install.active} onClick={stopService}>
+                Stop
+              </ButtonItem>
+            </div>
+          </div>
         </PanelSectionRow>
       )}
       {installed && (
@@ -537,46 +591,29 @@ function Content() {
 
   const mainPage = (
     <>
-      {installSection}
+      {mismatch && (
+        <PanelSection title="Update available">
+          <PanelSectionRow>
+            <ButtonItem layout="below" disabled={busy} onClick={() => runAction("service_update", "Update")}>
+              {busy ? "Working…" : `Update v${install?.binary_version ?? "?"} → v${install?.plugin_version ?? "?"}`}
+            </ButtonItem>
+          </PanelSectionRow>
+        </PanelSection>
+      )}
       <PanelSection title="Status">
         <PanelSectionRow>
-          <Field
-            label="Service"
-            description={
-              service
-                ? service.error
-                  ? `systemctl --user error: ${service.error}`
-                  : `enabled at boot: ${service.enabled ? "yes" : "no"}`
-                : "…"
-            }
-          >
-            {service ? `${service.ActiveState} / ${service.SubState}` : "unknown"}
+          <Field label="Service">
+            <span style={{ color: toneColor(serviceTone) }}>{serviceLabel}</span>
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
-          <Field label="Capture" description={capture?.detail || "…"}>
-            {capture
-              ? capture.state === "capturing"
-                ? "capturing"
-                : capture.state === "paused"
-                  ? "paused"
-                  : capture.state === "waiting"
-                    ? "waiting for gamescope"
-                    : "inactive (service not running)"
-              : "unknown"}
+          <Field label="Capture">
+            <span style={{ color: toneColor(captureTone) }}>{captureLabel}</span>
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
-          <Field label="FPS" description="live capture rate">
-            {capture?.fps != null ? capture.fps.toFixed(1) : "—"}
-          </Field>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <Field
-            label="WLED strip"
-            description={wled?.configured ? `host ${wled.host}: ${wled.info ?? wled.error ?? ""}` : "no host configured"}
-          >
-            {wled ? (wled.configured ? (wled.reachable ? "reachable" : "not reachable") : "not configured") : "…"}
+          <Field label="WLED strip">
+            <span style={{ color: toneColor(wledTone) }}>{wledLabel}</span>
           </Field>
         </PanelSectionRow>
       </PanelSection>
@@ -593,7 +630,6 @@ function Content() {
         <PanelSectionRow>
           <ToggleField
             label="Capture at startup"
-            description="saved in the config file; applied immediately on change"
             checked={!cfg.capture.start_paused}
             disabled={locked}
             onChange={(on) => patch("capture", "start_paused", !on)}
@@ -605,6 +641,7 @@ function Content() {
         <PanelSectionRow>
           <SliderField
             label={`Brightness (${Math.round(proc.brightness * 100)} %)`}
+            description="overall output level of the whole strip"
             min={0}
             max={1}
             step={0.01}
@@ -616,6 +653,7 @@ function Content() {
         <PanelSectionRow>
           <SliderField
             label={`Gamma (${proc.gamma.toFixed(2)})`}
+            description="mid-tone curve — above 1.00 lifts dark colors, below 1.00 deepens them"
             min={0.5}
             max={2.5}
             step={0.05}
@@ -627,6 +665,7 @@ function Content() {
         <PanelSectionRow>
           <SliderField
             label={`Saturation (${proc.saturation.toFixed(2)})`}
+            description="color intensity — 1.00 as captured, 0 = grayscale, higher = more vivid"
             min={0}
             max={3}
             step={0.05}
@@ -638,6 +677,7 @@ function Content() {
         <PanelSectionRow>
           <SliderField
             label={`Smooth (${proc.smooth.toFixed(2)})`}
+            description="temporal smoothing — higher slows color changes (less flicker)"
             min={0.05}
             max={1.0}
             step={0.05}
@@ -651,10 +691,12 @@ function Content() {
       <PanelSection title="Configuration">
         <PanelSectionRow>
           <ButtonItem layout="below" disabled={locked} onClick={enterConfig}>
-            Configuration
+            Configure LED Strip
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
+
+      {installSection}
     </>
   );
 
@@ -703,10 +745,10 @@ function Content() {
             onChange={(on) => patchDraft("layout", "direction", on ? "clockwise" : "counterclockwise")}
           />
         </PanelSectionRow>
-        {segmentRow("bottom", "LEDs on the bottom segment")}
-        {segmentRow("left", "LEDs on the left segment")}
-        {segmentRow("top", "LEDs on the top segment")}
-        {segmentRow("right", "LEDs on the right segment")}
+        {segmentRow("bottom", "Bottom Segment")}
+        {segmentRow("left", "Left Segment")}
+        {segmentRow("top", "Top Segment")}
+        {segmentRow("right", "Right Segment")}
         <PanelSectionRow>
           <Field
             label="Total active LEDs"
