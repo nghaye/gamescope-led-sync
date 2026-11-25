@@ -108,6 +108,19 @@ pub fn reload_if_changed(
     *cfg.borrow_mut() = new.clone();
     log_changes(&old, &new);
     apply_sender(&old, &new, sender);
+    // A smaller chain leaves WLED's tail LEDs at their last color (a DRGB
+    // packet only carries `count` LEDs): black out the whole segment once,
+    // then the next tick repaints the active LEDs.
+    if old.layout.packet_len() != new.layout.packet_len()
+        && let Some(s) = sender.borrow_mut().as_mut()
+    {
+        s.send_clear(4);
+        tracing::info!(
+            "layout LED count {} -> {}; strip cleared before repaint",
+            old.layout.packet_len(),
+            new.layout.packet_len()
+        );
+    }
     // A change of [capture] start_paused applies immediately (D12):
     // the plugin's «capture at startup» switch pauses/resumes the
     // running daemon, not just the next boot. Only an actual change of
@@ -206,7 +219,12 @@ pub fn apply_sender(old: &Config, new: &Config, sender: &Rc<RefCell<Option<WledS
     }
     let host = new.wled.as_deref().expect("sends() implies a host");
     match WledSender::new(host, new.port, new.timeout_s) {
-        Ok(s) => {
+        Ok(mut s) => {
+            // Streaming starts on this endpoint: wipe the whole segment
+            // (up to the one-packet max of 490 LEDs) so LEDs driven by the
+            // same controller beyond the strip's chain go dark before the
+            // first real packet.
+            s.send_clear(4);
             tracing::info!("WLED endpoint changed: {host}:{}", new.port);
             *sender.borrow_mut() = Some(s);
         },
@@ -231,7 +249,12 @@ pub fn ensure_sender(
     last_try.set(now);
     let host = cfg.wled.as_deref().expect("sends() implies a host");
     match WledSender::new(host, cfg.port, cfg.timeout_s) {
-        Ok(s) => {
+        Ok(mut s) => {
+            // Streaming starts here: black out every LED of the segment
+            // (490 = one DRGB packet's max), so LEDs beyond the strip's
+            // chain — same controller, e.g. white on capture start — are
+            // off before the first real packet repaints the chain.
+            s.send_clear(4);
             tracing::info!("WLED sender ready: {host}:{}", cfg.port);
             *sender.borrow_mut() = Some(s);
         },
@@ -370,5 +393,78 @@ mod tests {
         let sender: Rc<RefCell<Option<WledSender>>> = Rc::new(RefCell::new(None));
         apply_sender(&old, &new, &sender);
         assert!(sender.borrow().is_none(), "no sender could be created");
+    }
+
+    #[test]
+    fn layout_count_change_clears_the_strip() {
+        let dir = tempdir("clear");
+        let path = dir.join("config.toml");
+        fs::write(
+            &path,
+            "[wled]\nhost = \"127.0.0.1\"\nport = 9\n[layout]\ntop = 4\nright = 4\nbottom = 8\nleft = 4\n",
+        )
+        .unwrap();
+        let cfg = Rc::new(RefCell::new(Config::load(&path).unwrap()));
+        let sender: Rc<RefCell<Option<WledSender>>> = Rc::new(RefCell::new(Some(
+            WledSender::new("127.0.0.1", 9, 2).unwrap(),
+        )));
+        let reloader = Rc::new(RefCell::new(Reloader::new(Some(path.clone()))));
+        assert!(reload_if_changed(&cfg, &sender, &reloader).is_none());
+        // Same count, different offset: the packet length is unchanged, no clear.
+        fs::write(
+            &path,
+            "[wled]\nhost = \"127.0.0.1\"\nport = 9\n[layout]\ntop = 4\nright = 4\nbottom = 8\nleft = 4\noffset = 2\n",
+        )
+        .unwrap();
+        reload_if_changed(&cfg, &sender, &reloader).expect("offset change reloads");
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().sent,
+            0,
+            "same packet length: no clear"
+        );
+        // Smaller count: WLED would keep the tail LEDs lit — clear the strip.
+        fs::write(
+            &path,
+            "[wled]\nhost = \"127.0.0.1\"\nport = 9\n[layout]\ntop = 4\nright = 4\nbottom = 4\nleft = 4\noffset = 2\n# smaller\n",
+        )
+        .unwrap();
+        reload_if_changed(&cfg, &sender, &reloader).expect("count change reloads");
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().sent,
+            4,
+            "a shrunken layout blacks out the whole segment before repaint"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ensure_sender_clears_the_whole_segment_at_streaming_start() {
+        let mut cfg = Config::defaults();
+        cfg.wled = Some("127.0.0.1".to_string());
+        cfg.port = 9;
+        let sender: Rc<RefCell<Option<WledSender>>> = Rc::new(RefCell::new(None));
+        let last_try = Cell::new(Instant::now() - SENDER_RETRY);
+        ensure_sender(&cfg, &sender, &last_try);
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().sent,
+            4,
+            "streaming start wipes all 490 LEDs before the first real packet"
+        );
+    }
+
+    #[test]
+    fn apply_sender_clears_the_new_endpoint_on_change() {
+        let mut old = Config::defaults();
+        old.wled = Some("old.invalid".to_string());
+        let mut new = old.clone();
+        new.wled = Some("127.0.0.1".to_string());
+        new.port = 9;
+        let sender: Rc<RefCell<Option<WledSender>>> = Rc::new(RefCell::new(None));
+        apply_sender(&old, &new, &sender);
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().sent,
+            4,
+            "a new endpoint is cleared full-length at streaming start"
+        );
     }
 }

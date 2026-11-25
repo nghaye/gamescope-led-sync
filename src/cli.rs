@@ -83,7 +83,14 @@ struct Cli {
 
     /// Circular shift of the whole strip (loop: the last LED is next to the
     /// first); positive shifts toward higher LED indices, negative toward lower
-    #[arg(long, value_name = "N", default_value_t = 0)]
+    // allow_hyphen_values: a negative offset is written `--offset -3`, and
+    // clap would otherwise read `-3` as a flag and reject the whole command.
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 0,
+        allow_hyphen_values = true
+    )]
     offset: i32,
 
     /// Hole at the loop seam, in LED pitches, between the strip's last and
@@ -401,6 +408,20 @@ mod tests {
         let err = merge(&cli, &matches, Config::defaults()).unwrap_err();
         assert!(matches!(&err, ConfigError::Layout(_)), "{err}");
         assert!(err.to_string().contains("491"), "{err}");
+    }
+
+    #[test]
+    fn cli_negative_offset_is_accepted_as_a_value() {
+        // `--offset -3` must parse: without allow_hyphen_values clap reads
+        // `-3` as a flag and rejects the whole command, which killed the
+        // Decky preview process on any negative offset.
+        let (cli, matches) = cli_from(&["gamescope-led-sync", "--offset", "-3"]);
+        let cfg = merge(&cli, &matches, Config::defaults()).unwrap();
+        assert_eq!(cfg.layout.offset(), -3);
+        // The `--offset=-3` form always worked; both must agree.
+        let (cli, matches) = cli_from(&["gamescope-led-sync", "--offset=-3"]);
+        let cfg = merge(&cli, &matches, Config::defaults()).unwrap();
+        assert_eq!(cfg.layout.offset(), -3);
     }
 
     #[test]

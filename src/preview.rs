@@ -66,6 +66,11 @@ pub fn run(cfg: &Config) -> ExitCode {
         host,
         cfg.port,
     );
+    // Repaint from a clean slate: a DRGB packet only carries `count` LEDs,
+    // so after the layout shrinks WLED would keep the tail LEDs at their
+    // previous color. The plugin respawns this process on every draft
+    // change, so clearing here refreshes the whole strip on each change.
+    sender.send_clear(4);
     loop {
         if crate::capture::interrupted() {
             return ExitCode::SUCCESS;

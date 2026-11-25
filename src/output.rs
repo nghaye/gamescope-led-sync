@@ -13,6 +13,9 @@ use {
 // https://kno.wled.ge/interfaces/udp-realtime/
 const DRGB_PROTOCOL: u8 = 2;
 
+/// One DRGB packet carries at most 490 LEDs (1472 payload bytes).
+pub const MAX_PACKET_LEDS: usize = 490;
+
 /// A WLED DRGB realtime packet: the protocol byte, then the timeout
 /// byte (seconds WLED stays in realtime after the last packet), then
 /// three bytes per LED in order. Up to 490 LEDs fit one packet.
@@ -90,6 +93,19 @@ impl WledSender {
     /// update it in place without recreating the sender (§7).
     pub fn set_timeout(&mut self, timeout_s: u8) {
         self.timeout_s = timeout_s;
+    }
+
+    /// Black out the whole segment: a DRGB packet only carries the
+    /// chain's `count` LEDs, so when the layout shrinks, WLED keeps the
+    /// tail LEDs at their last color. A full-length black packet turns
+    /// every LED of the segment off (WLED ignores LEDs beyond its own
+    /// segment length); the next real packet repaints the active ones.
+    /// Sent `times` times back to back because UDP is lossy.
+    pub fn send_clear(&mut self, times: usize) {
+        let black = vec![[0u8; 3]; MAX_PACKET_LEDS];
+        for _ in 0..times {
+            self.send(&black);
+        }
     }
 }
 
@@ -239,6 +255,26 @@ mod tests {
     fn drgb_packet_length() {
         let colors = vec![[0u8; 3]; 420];
         assert_eq!(drgb_packet(2, &colors).len(), 2 + 420 * 3);
+    }
+
+    // send_clear blacks out a full-length packet (the one-packet maximum
+    // of 490 LEDs) once per requested time, so a shrunken layout can wipe
+    // WLED's tail LEDs before the next real packet repaints the strip.
+    #[test]
+    fn send_clear_sends_full_length_black_packets() {
+        let rx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = rx.local_addr().unwrap().port();
+        rx.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut s = WledSender::new("127.0.0.1", port, 2).unwrap();
+        s.send_clear(2);
+        assert_eq!(s.sent, 2);
+        // The clear packet is a normal DRGB packet: header + 490 black LEDs.
+        let mut buf = [0u8; 2048];
+        let (n, _) = rx.recv_from(&mut buf).unwrap();
+        assert_eq!(n, 2 + MAX_PACKET_LEDS * 3);
+        assert_eq!(&buf[..2], &[DRGB_PROTOCOL, 2]);
+        assert!(buf[2..n].iter().all(|&b| b == 0));
     }
 
     // crc32 must be CRC-32/ISO-HDLC, the one PNG uses. Its documented
