@@ -1,6 +1,6 @@
 {
   "name": "gamescope-led-sync",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Decky Loader plugin for gamescope-led-sync: live configuration of the WLED ambient backlight daemon",
   "type": "module",
   "scripts": {
