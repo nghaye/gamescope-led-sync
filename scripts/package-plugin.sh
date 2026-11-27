@@ -8,8 +8,8 @@
 #   gamescope-led-sync-decky-<version>.zip.sha256
 #
 # The zip embeds the prebuilt payload the plugin installs on the Steam Deck —
-# binary + systemd user unit + example config + license — under
-# gamescope-led-sync/payload/, next to the plugin itself (plugin.json,
+# binary + systemd user unit + example config + calibration .desktop + license —
+# under gamescope-led-sync/payload/, next to the plugin itself (plugin.json,
 # package.json, main.py, dist/). The version is read from Cargo.toml and must
 # match plugin/plugin.json and plugin/package.json (`just check-versions`).
 #
@@ -62,10 +62,11 @@ echo "== plugin frontend build"
 # --- fill the payload -------------------------------------------------------------
 echo "== payload"
 rm -rf "$PAYLOAD"
-mkdir -p "$PAYLOAD/bin" "$PAYLOAD/systemd" "$PAYLOAD/config"
+mkdir -p "$PAYLOAD/bin" "$PAYLOAD/systemd" "$PAYLOAD/config" "$PAYLOAD/desktop"
 install -m 0755 "$BIN" "$PAYLOAD/bin/$PLUGIN_DIR_NAME"
 install -m 0644 "$REPO_DIR/deploy/$PLUGIN_DIR_NAME.service" "$PAYLOAD/systemd/$PLUGIN_DIR_NAME.service"
 install -m 0644 "$REPO_DIR/deploy/config.toml.example" "$PAYLOAD/config/config.toml.example"
+install -m 0644 "$REPO_DIR/deploy/gamescope-led-sync-calibrate.desktop" "$PAYLOAD/desktop/gamescope-led-sync-calibrate.desktop"
 install -m 0644 "$REPO_DIR/LICENSE" "$PAYLOAD/LICENSE"
 
 # --- zip --------------------------------------------------------------------------

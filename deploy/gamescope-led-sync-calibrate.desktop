@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Calibration LED (gamescope-led-sync)
+Comment=Calibrer la colorimétrie du ruban LED WLED (plein écran, manette)
+Exec=@BIN@ --calibrate
+Terminal=false
+Categories=Utility;Settings;
+Keywords=led;wled;calibration;gamescope;

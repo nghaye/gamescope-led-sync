@@ -67,6 +67,7 @@ PATH_CONSTANTS = (
     "PAYLOAD_BIN",
     "PAYLOAD_UNIT",
     "PAYLOAD_CONFIG",
+    "PAYLOAD_DESKTOP",
     "PAYLOAD_LICENSE",
     "CONFIG",
     "BINARY",
@@ -74,6 +75,7 @@ PATH_CONSTANTS = (
     "UNIT_DIR",
     "UNIT_FILE",
     "LICENSE_DEST",
+    "DESKTOP_DEST",
 )
 
 
@@ -91,6 +93,7 @@ class InstallTestCase(unittest.TestCase):
         main.PAYLOAD_BIN = main.PAYLOAD / "bin" / "gamescope-led-sync"
         main.PAYLOAD_UNIT = main.PAYLOAD / "systemd" / "gamescope-led-sync.service"
         main.PAYLOAD_CONFIG = main.PAYLOAD / "config" / "config.toml.example"
+        main.PAYLOAD_DESKTOP = main.PAYLOAD / "desktop" / "gamescope-led-sync-calibrate.desktop"
         main.PAYLOAD_LICENSE = main.PAYLOAD / "LICENSE"
         main.CONFIG = root / ".config" / "gamescope-led-sync" / "config.toml"
         main.BINARY = str(root / ".local" / "bin" / "gamescope-led-sync")
@@ -98,6 +101,7 @@ class InstallTestCase(unittest.TestCase):
         main.UNIT_DIR = root / ".config" / "systemd" / "user"
         main.UNIT_FILE = main.UNIT_DIR / "gamescope-led-sync.service"
         main.LICENSE_DEST = root / ".local" / "share" / "gamescope-led-sync" / "LICENSE"
+        main.DESKTOP_DEST = root / ".local" / "share" / "applications" / "gamescope-led-sync-calibrate.desktop"
         main._install_lock = threading.Lock()
         main.PLUGIN_DIR.mkdir(parents=True, exist_ok=True)
         (main.PLUGIN_DIR / "plugin.json").write_text(
@@ -123,6 +127,10 @@ class InstallTestCase(unittest.TestCase):
         main.PAYLOAD_UNIT.write_text("[Unit]\nDescription=payload unit\n", encoding="utf-8")
         main.PAYLOAD_CONFIG.parent.mkdir(parents=True, exist_ok=True)
         main.PAYLOAD_CONFIG.write_text("[wled]\nhost = \"wled.local\"\n", encoding="utf-8")
+        main.PAYLOAD_DESKTOP.parent.mkdir(parents=True, exist_ok=True)
+        main.PAYLOAD_DESKTOP.write_text(
+            "[Desktop Entry]\nType=Application\nExec=@BIN@ --calibrate\n", encoding="utf-8"
+        )
         main.PAYLOAD_LICENSE.write_text("Apache-2.0\n", encoding="utf-8")
 
     def install_binary(self, version):
@@ -207,6 +215,19 @@ class ServiceInstallTests(InstallTestCase):
         # atomic copy: no temp file left behind
         self.assertEqual(list(main.BIN_DIR.glob(".*.tmp")), [])
 
+    def test_install_installs_calibration_desktop_with_bin_path(self):
+        self.make_payload()
+        res = self.go(self.plugin.service_install())
+        self.assertTrue(res["ok"], res)
+        self.assertTrue(main.DESKTOP_DEST.is_file())
+        text = main.DESKTOP_DEST.read_text(encoding="utf-8")
+        self.assertIn(f"Exec={main.BINARY} --calibrate", text)
+        self.assertNotIn("@BIN@", text)
+        self.assertIn(f"calibration .desktop -> {main.DESKTOP_DEST}", res["steps"])
+        status = self.go(self.plugin.install_status())
+        self.assertTrue(status["payload_desktop_present"])
+        self.assertTrue(status["desktop_installed"])
+
     def test_install_never_overwrites_an_existing_config(self):
         self.make_payload()
         main.CONFIG.parent.mkdir(parents=True, exist_ok=True)
@@ -272,11 +293,14 @@ class ServiceUninstallTests(InstallTestCase):
         main.UNIT_FILE.write_text("[Unit]\n", encoding="utf-8")
         main.CONFIG.parent.mkdir(parents=True, exist_ok=True)
         main.CONFIG.write_text("# keep me\n", encoding="utf-8")
+        main.DESKTOP_DEST.parent.mkdir(parents=True, exist_ok=True)
+        main.DESKTOP_DEST.write_text("[Desktop Entry]\n", encoding="utf-8")
         res = self.go(self.plugin.service_uninstall())
         self.assertTrue(res["ok"], res)
         self.assertEqual(res["config_kept"], str(main.CONFIG))
         self.assertFalse(Path(main.BINARY).exists())
         self.assertFalse(main.UNIT_FILE.exists())
+        self.assertFalse(main.DESKTOP_DEST.exists(), "uninstall removes the calibration .desktop")
         self.assertEqual(main.CONFIG.read_text(encoding="utf-8"), "# keep me\n")
         verbs = self.systemctl.verbs()
         self.assertIn("disable", verbs)

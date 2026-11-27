@@ -12,12 +12,16 @@
 # available. Installs the binary to ~/.local/bin/gamescope-led-sync (plain
 # install -m 0755, no sudo), copies deploy/config.toml.example to
 # ~/.config/gamescope-led-sync/config.toml only if absent (never overwrites a
-# user config), installs the systemd user unit to ~/.config/systemd/user/ and
-# runs `systemctl --user daemon-reload`. --enable additionally runs
-# `systemctl --user enable --now gamescope-led-sync`.
+# user config), installs the systemd user unit to ~/.config/systemd/user/,
+# installs the calibration launcher (deploy/gamescope-led-sync-calibrate.desktop
+# with @BIN@ replaced by the installed binary path) to
+# ~/.local/share/applications/ so it can be added as a non-Steam game in Steam
+# Big Picture, and runs `systemctl --user daemon-reload`. --enable additionally
+# runs `systemctl --user enable --now gamescope-led-sync`.
 #
-# --uninstall disables and stops the unit, removes the unit and the binary,
-# and reloads the user daemon. The user config file is kept.
+# --uninstall disables and stops the unit, removes the unit, the binary, and
+# the calibration .desktop, and reloads the user daemon. The user config file
+# is kept.
 
 set -euo pipefail
 
@@ -26,8 +30,10 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEPLOY_DIR="$REPO_DIR/deploy"
 BINARY_NAME="gamescope-led-sync"
 UNIT_NAME="gamescope-led-sync.service"
+DESKTOP_NAME="gamescope-led-sync-calibrate.desktop"
 CONFIG_DIR="$HOME/.config/gamescope-led-sync"
 UNIT_DIR="$HOME/.config/systemd/user"
+APP_DIR="$HOME/.local/share/applications"
 LOCAL_BINARY="$HOME/.local/bin/$BINARY_NAME"
 
 usage() {
@@ -37,7 +43,8 @@ Usage: install-service.sh [--binary PATH] [--enable]
 
   --binary PATH   install this prebuilt binary instead of building with cargo
   --enable        systemctl --user enable --now $UNIT_NAME after installing
-  --uninstall     disable --now, remove the unit and the binary (config kept)
+  --uninstall     disable --now, remove the unit, the binary and the
+                  calibration .desktop (config kept)
 EOF
 }
 
@@ -70,8 +77,9 @@ if [ "$UNINSTALL" -eq 1 ]; then
   systemctl --user disable --now "$UNIT_NAME" 2>/dev/null || true
   rm -f "$UNIT_DIR/$UNIT_NAME"
   rm -f "$LOCAL_BINARY"
+  rm -f "$APP_DIR/$DESKTOP_NAME"
   systemctl --user daemon-reload
-  echo "uninstalled $UNIT_NAME and $LOCAL_BINARY"
+  echo "uninstalled $UNIT_NAME, $LOCAL_BINARY and $APP_DIR/$DESKTOP_NAME"
   echo "the config in $CONFIG_DIR/config.toml was kept"
   exit 0
 fi
@@ -105,12 +113,20 @@ fi
 # systemd user unit.
 mkdir -p "$UNIT_DIR"
 install -m 0644 "$DEPLOY_DIR/$UNIT_NAME" "$UNIT_DIR/$UNIT_NAME"
+
+# Calibration launcher for Steam Big Picture: the .desktop ships with a @BIN@
+# placeholder, filled with the installed binary's absolute path.
+mkdir -p "$APP_DIR"
+sed "s|@BIN@|$LOCAL_BINARY|g" "$DEPLOY_DIR/$DESKTOP_NAME" > "$APP_DIR/$DESKTOP_NAME"
+chmod 0644 "$APP_DIR/$DESKTOP_NAME"
+echo "installed $APP_DIR/$DESKTOP_NAME (add it as a non-Steam game in Steam to launch the calibration from Big Picture)"
+
 systemctl --user daemon-reload
 
 if [ "$ENABLE" -eq 1 ]; then
   systemctl --user enable --now "$UNIT_NAME"
 fi
 
-echo "installed $LOCAL_BINARY and $UNIT_DIR/$UNIT_NAME"
+echo "installed $LOCAL_BINARY, $UNIT_DIR/$UNIT_NAME and $APP_DIR/$DESKTOP_NAME"
 echo "enable at boot + start now: systemctl --user enable --now $UNIT_NAME"
 echo "logs: journalctl --user -u $UNIT_NAME -f"

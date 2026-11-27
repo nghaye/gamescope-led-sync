@@ -645,3 +645,54 @@ are now locked where indicated:
 14. Below the four per-edge LED count fields, the plugin shows a read-only,
     non-editable total LED count (`top + right + bottom + left`), recomputed
     live (§10.2).
+
+## 18. Stand-alone LED color calibration (`--calibrate`, ticket 18)
+
+A calibration mode of the same binary, independent from the daemon and the capture
+(user request: fix strip/TV color drift, e.g. yellow leaning orange). A mode, not a
+flag in the file, like `--setup`/`--preview-strip` (§4.4): CLI-only `calibrate: bool`,
+never persisted.
+
+1. **Launch**: `gamescope-led-sync --calibrate`, or from Steam Big Picture via
+   `deploy/gamescope-led-sync-calibrate.desktop` (installed with `@BIN@` → installed
+   binary path by `scripts/install-service.sh` and by the Decky plugin's
+   install/update into `~/.local/share/applications/`; the user adds it as a non-Steam
+   game manually — Steam cannot be modified programmatically).
+2. **Capture pause**: on start, if the user service is active and not already paused
+   (state parsed from the last 200 journal lines, same markers as §10.1), send
+   `systemctl --user kill gamescope-led-sync --signal=SIGUSR1` (§6.2). A guard resumes
+   the capture (SIGUSR1 again) on exit — only if this run paused it.
+3. **Window**: borderless full-screen winit window rendered in software
+   (softbuffer, XRGB8888) with text from embedded DejaVu (ab_glyph + `dejavu` crate) —
+   no system font, no GPU needed. Input: gamepads read straight from evdev
+   (`/dev/input/event*`, libc only, EVIOCGBIT filter on BTN_SOUTH/BTN_DPAD_UP) —
+   D-pad/stick = navigate, left/right = adjust (accelerated auto-repeat), A = confirm,
+   B = cancel, LB/RB = previous/next — plus a keyboard fallback
+   (arrows/Enter/Esc/PgUp/PgDn). 100% controller-driven; no input-stack dependency.
+4. **Color pages**: a fixed palette of 24 colors (`src/calibrate/colors.rs`, 20–30
+   required). Each page shows the target color full-screen and sends the
+   slider-adjusted color to the whole strip at **60%** brightness
+   (`vec![adjusted × 0.6; layout.packet_len()]`, DRGB every 250 ms keepalive,
+   `timeout_s` from the config). 3 RGB sliders (0–255, start at the target) and
+   **Previous / Cancel / Next** buttons on every page; on the last color Next becomes
+   Terminer. Cancel (button or B) quits without saving anything.
+5. **Fit** (`src/calibrate/fit.rs`): WLED's white balance is a per-channel gain, model
+   `out = clamp(target × gain)`; per channel, least squares
+   `gain_c = Σ(t_c·a_c)/Σ(t_c²)` over samples with `t_c > 0`, clamped to [0,1]
+   (WLED only attenuates), normalized so max gain = 1.0 (white point at full
+   brightness), emitted as Red/Green/Blue 0–255 for WLED Settings → LED preferences →
+   "Color white" (kno.wled.ge/features/settings/#color-white). Warnings on saturated
+   samples and on a near-zero channel (suspected Color Order permutation).
+6. **Report page**: after the last color, shows the report (per-color target →
+   adjusted table, gains, WLED values, warnings) with scroll, and a Quit button.
+   The report is also written to
+   `~/.config/gamescope-led-sync/calibration-<UTC timestamp>.txt`.
+7. **Exit**: WLED realtime released immediately (`WledSender::release()`: header-only
+   packets with timeout byte 0, ×3 for UDP loss), then the capture guard resumes the
+   daemon. `--dry-run` logs the strip colors instead of sending.
+8. **Errors**: no `--wled` host → exit 1 with a named error *before* any window or
+   PipeWire is touched (headless-testable); window/event-loop failures → exit 1.
+
+Dependencies added: `winit 0.30`, `softbuffer 0.4`, `ab_glyph 0.2`, `dejavu 2.37`
+(embedded font, MIT/Apache-2.0). No system X11/Wayland dev libraries needed at build
+time (x11rb is pure Rust, wayland is dlopen'd).

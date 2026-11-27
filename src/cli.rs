@@ -138,6 +138,13 @@ struct Cli {
     /// plugin's configuration screen. Debug-only, never in the file
     #[arg(long)]
     preview_strip: bool,
+
+    /// Stand-alone LED color calibration: full-screen test colors driven
+    /// 100% by gamepad, RGB sliders sent to the strip at 60%, and a final
+    /// report with the WLED white-balance values. Pauses the daemon's
+    /// capture while it runs. Never in the config file
+    #[arg(long)]
+    calibrate: bool,
 }
 
 /// Emit a clap-styled error and exit, for validation clap cannot express
@@ -265,6 +272,7 @@ fn merge(cli: &Cli, matches: &clap::ArgMatches, mut cfg: Config) -> Result<Confi
     cfg.dump = cli.dump.clone();
     cfg.preview = cli.preview;
     cfg.preview_strip = cli.preview_strip;
+    cfg.calibrate = cli.calibrate;
 
     cfg.validate()?;
     Ok(cfg)
@@ -493,6 +501,19 @@ mod tests {
                 "[capture]\npreview_strip = true\n"
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn calibrate_is_a_cli_only_flag() {
+        let (cli, matches) = cli_from(&["gamescope-led-sync", "--calibrate"]);
+        let cfg = merge(&cli, &matches, Config::defaults()).unwrap();
+        assert!(cfg.calibrate);
+        assert!(!Config::defaults().calibrate);
+        // The file cannot set it: unknown key.
+        assert!(
+            Config::from_file_content(&PathBuf::from("t.toml"), "[capture]\ncalibrate = true\n")
+                .is_err()
         );
     }
 
