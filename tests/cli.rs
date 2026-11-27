@@ -147,11 +147,17 @@ fn setup_with_eof_on_stdin_quits_without_writing() {
 #[test]
 fn calibrate_without_wled_host_fails_cleanly() {
     let out = run(&["--calibrate"]);
-    let stderr = stderr_of(&out);
-    assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
+    // tracing's fmt layer writes to stdout when TERM is unset (CI runners),
+    // so check both streams.
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr_of(&out)
+    );
+    assert_eq!(out.status.code(), Some(1), "output: {all}");
     assert!(
-        stderr.contains("--calibrate") && stderr.contains("WLED"),
-        "stderr: {stderr}"
+        all.contains("--calibrate") && all.contains("WLED"),
+        "output: {all}"
     );
 }
 
