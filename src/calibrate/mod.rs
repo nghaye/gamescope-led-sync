@@ -134,7 +134,9 @@ pub fn run(cfg: &Config) -> ExitCode {
 
     match result {
         Ok(ui) => {
+            let n_samples = ui.state.samples.iter().flatten().count();
             if let Some(report) = &ui.report {
+                tracing::info!("calibration finished: {n_samples} colors recorded");
                 if let Some(dir) = path.parent() {
                     let _ = fs::create_dir_all(dir);
                 }
@@ -145,7 +147,7 @@ pub fn run(cfg: &Config) -> ExitCode {
                     },
                 }
             } else {
-                tracing::info!("calibration cancelled; no report saved");
+                tracing::info!("calibration cancelled after {n_samples} colors; no report saved");
             }
             ExitCode::SUCCESS
         },

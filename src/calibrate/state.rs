@@ -98,13 +98,6 @@ impl UiState {
         }
     }
 
-    pub fn current_index(&self) -> usize {
-        match self.page {
-            Page::Color(i) => i,
-            Page::Report => self.colors.len(),
-        }
-    }
-
     /// Enter a color page: sliders start from the recorded sample when the
     /// color was already validated, else from the target itself.
     fn enter_color(&mut self, i: usize) {
@@ -176,18 +169,30 @@ impl UiState {
                 self.held = Some((pad, now, now));
                 Outcome::Continue
             },
-            Pad::Confirm => match self.page {
-                Page::Color(_) => match self.focus {
-                    Focus::Prev => self.go_prev(),
-                    Focus::Next => self.go_next(),
-                    Focus::Cancel => Outcome::Quit,
-                    Focus::R | Focus::G | Focus::B => Outcome::Continue,
-                },
-                Page::Report => Outcome::Quit,
+            Pad::Confirm => {
+                self.release();
+                match self.page {
+                    Page::Color(_) => match self.focus {
+                        Focus::Prev => self.go_prev(),
+                        Focus::Next => self.go_next(),
+                        Focus::Cancel => Outcome::Quit,
+                        Focus::R | Focus::G | Focus::B => Outcome::Continue,
+                    },
+                    Page::Report => Outcome::Quit,
+                }
             },
-            Pad::Cancel => Outcome::Quit,
-            Pad::Prev => self.go_prev(),
-            Pad::Next => self.go_next(),
+            Pad::Cancel => {
+                self.release();
+                Outcome::Quit
+            },
+            Pad::Prev => {
+                self.release();
+                self.go_prev()
+            },
+            Pad::Next => {
+                self.release();
+                self.go_next()
+            },
         }
     }
 
@@ -343,7 +348,6 @@ mod tests {
         }
         assert_eq!(s.page, Page::Report);
         assert!(s.report_ready);
-        assert_eq!(s.current_index(), n);
         assert!(s.samples.iter().all(|x| x.is_some()));
     }
 

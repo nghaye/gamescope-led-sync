@@ -690,7 +690,7 @@ never persisted.
 7. **Exit**: WLED realtime released immediately (`WledSender::release()`: header-only
    packets with timeout byte 0, ×3 for UDP loss), then the capture guard resumes the
    daemon. `--dry-run` logs the strip colors instead of sending.
-8. **Errors**: no `--wled` host → exit 1 with a named error *before* any window or
+8. **Errors**: no `--wled` host → exit 1 with a named error _before_ any window or
    PipeWire is touched (headless-testable); window/event-loop failures → exit 1.
 
 Dependencies added: `winit 0.30`, `softbuffer 0.4`, `ab_glyph 0.2`, `dejavu 2.37`
