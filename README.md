@@ -38,8 +38,10 @@ systemd user unit, an example config and the license:
    (Big Picture, controller only): the plugin copies the binary to
    `~/.local/bin/gamescope-led-sync`, the unit to
    `~/.config/systemd/user/gamescope-led-sync.service`, the example config to
-   `~/.config/gamescope-led-sync/config.toml` (only if absent), then
-   `daemon-reload` + `enable --now`. No sudo — everything is user-space.
+   `~/.config/gamescope-led-sync/config.toml` (only if absent), the calibration
+   launcher to `~/.local/share/applications/gamescope-led-sync-calibrate.desktop`
+   (see _LED color calibration_ below), then `daemon-reload` + `enable --now`.
+   No sudo — everything is user-space.
 
 The plugin's **Installation** section shows the plugin version, the installed
 version, and whether they match; on a mismatch (new zip imported, old service
@@ -90,7 +92,7 @@ See [deploy/config.toml.example](./deploy/config.toml.example) for a fully comme
 
 ### CLI overrides
 
-One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--gap N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, `--start-paused` (start with the capture paused), plus debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip` (send the per-segment test pattern to WLED until SIGTERM). Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
+One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--gap N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, `--start-paused` (start with the capture paused), plus debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip` (send the per-segment test pattern to WLED until SIGTERM), and `--calibrate` (stand-alone full-screen LED color calibration, see above). Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
 
 ## Service management
 
@@ -102,6 +104,16 @@ journalctl --user -u gamescope-led-sync -f         # logs
 ```
 
 The daemon waits for the gamescope node (reconnect loop), so starting it at boot before Steam is fine. The [Decky plugin](./plugin) configures everything live from the Steam UI.
+
+## LED color calibration
+
+If the strip's colors drift from the screen (e.g. a yellow leaning orange on the LEDs), run the stand-alone calibration. It is installed as `~/.local/share/applications/gamescope-led-sync-calibrate.desktop` — in Steam, add it as a **non-Steam game** ("Calibration LED (gamescope-led-sync)") and launch it from Big Picture. It runs full-screen, 100% controller-driven:
+
+- On start it pauses the daemon's capture (SIGUSR1) so the strip is yours alone, and resumes it on exit.
+- Each of 24 test colors is shown full-screen while the whole strip lights in the slider-adjusted color at **60%** brightness. Tune the **R/G/B sliders** until the strip matches the screen, then go to the next color. Every page has **Previous / Cancel / Next** buttons. Controls: D-pad/stick = navigate, left/right = adjust (auto-repeat), **A** = confirm, **B** = cancel, **LB/RB** = previous/next (keyboard fallback: arrows, Enter, Esc, PgUp/PgDn).
+- After the last color, a report page shows the fitted per-channel gains and the **WLED white balance** values to enter — WLED web UI: _Settings → LED preferences → "Color white"_: **Red / Green / Blue** (0–255, 255 = no correction) — plus warnings (e.g. suspected Color Order permutation). The full report is saved to `~/.config/gamescope-led-sync/calibration-<UTC timestamp>.txt`. **Quit** releases the WLED realtime mode immediately and resumes the capture.
+
+From a shell it is the same: `gamescope-led-sync --calibrate` (`--dry-run` logs the strip colors instead of sending them). Details in [SPEC.md §18](./SPEC.md).
 
 ## Strip geometry
 

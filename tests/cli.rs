@@ -108,6 +108,7 @@ fn help_lists_the_full_v1_cli_surface() {
         "--once",
         "--dump",
         "--preview",
+        "--calibrate",
     ] {
         assert!(stdout.contains(flag), "help must list {flag}:\n{stdout}");
     }
@@ -138,6 +139,26 @@ fn setup_with_eof_on_stdin_quits_without_writing() {
     );
     assert!(!config.exists(), "setup must not write on EOF");
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// `--calibrate` without a WLED host must fail cleanly (exit 1, named
+/// error) before touching any display or PipeWire: the host check comes
+/// first in calibrate::run, so this is safe to run headless.
+#[test]
+fn calibrate_without_wled_host_fails_cleanly() {
+    let out = run(&["--calibrate"]);
+    // tracing's fmt layer writes to stdout when TERM is unset (CI runners),
+    // so check both streams.
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr_of(&out)
+    );
+    assert_eq!(out.status.code(), Some(1), "output: {all}");
+    assert!(
+        all.contains("--calibrate") && all.contains("WLED"),
+        "output: {all}"
+    );
 }
 
 /// `--version` prints `<name> <crate version>` on stdout with exit code 0.

@@ -31,6 +31,7 @@ PAYLOAD = PLUGIN_DIR / "payload"
 PAYLOAD_BIN = PAYLOAD / "bin" / "gamescope-led-sync"
 PAYLOAD_UNIT = PAYLOAD / "systemd" / "gamescope-led-sync.service"
 PAYLOAD_CONFIG = PAYLOAD / "config" / "config.toml.example"
+PAYLOAD_DESKTOP = PAYLOAD / "desktop" / "gamescope-led-sync-calibrate.desktop"
 PAYLOAD_LICENSE = PAYLOAD / "LICENSE"
 
 # Install targets — all user-space, no sudo (D6).
@@ -38,6 +39,10 @@ BIN_DIR = Path.home() / ".local" / "bin"
 UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
 UNIT_FILE = UNIT_DIR / "gamescope-led-sync.service"
 LICENSE_DEST = Path.home() / ".local" / "share" / "gamescope-led-sync" / "LICENSE"
+# The calibration launcher, installed next to the apps so it can be added as
+# a non-Steam game in Steam Big Picture (ticket 18): the payload .desktop
+# carries a @BIN@ placeholder filled with the installed binary's path.
+DESKTOP_DEST = Path.home() / ".local" / "share" / "applications" / "gamescope-led-sync-calibrate.desktop"
 
 # Serializes install/update/uninstall so two taps on a button cannot race.
 _install_lock = threading.Lock()
@@ -355,6 +360,29 @@ def _binary_version():
     return m.group(1) if m else None
 
 
+def _install_desktop(steps):
+    """Install the calibration .desktop into ~/.local/share/applications with
+    @BIN@ replaced by the installed binary (ticket 18)."""
+    if not PAYLOAD_DESKTOP.is_file():
+        return False
+    DESKTOP_DEST.parent.mkdir(parents=True, exist_ok=True)
+    text = PAYLOAD_DESKTOP.read_text(encoding="utf-8").replace("@BIN@", BINARY)
+    fd, tmp = tempfile.mkstemp(dir=DESKTOP_DEST.parent, prefix=".desktop-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, DESKTOP_DEST)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    steps.append(f"calibration .desktop -> {DESKTOP_DEST}")
+    return True
+
+
 def _copy_atomic(src, dst, mode):
     """Copy src to dst atomically: temp file in dst's directory, chmod, then
     rename. Overwriting a running binary in place would fail with «text file
@@ -470,6 +498,8 @@ class Plugin:
             "ok": True,
             "plugin_version": plugin_version,
             "payload_present": PAYLOAD_BIN.is_file(),
+            "payload_desktop_present": PAYLOAD_DESKTOP.is_file(),
+            "desktop_installed": DESKTOP_DEST.is_file(),
             "binary_installed": binary_present,
             "binary_version": binary_version,
             "unit_installed": UNIT_FILE.is_file(),
@@ -510,6 +540,7 @@ class Plugin:
             if PAYLOAD_LICENSE.is_file():
                 _copy_atomic(PAYLOAD_LICENSE, LICENSE_DEST, 0o644)
                 steps.append(f"license → {LICENSE_DEST}")
+            _install_desktop(steps)
             r = _systemctl("daemon-reload")
             if r.returncode != 0:
                 return {"ok": False, "error": f"daemon-reload failed: {r.stderr.strip()}", "steps": steps}
@@ -531,7 +562,7 @@ class Plugin:
         try:
             _systemctl("disable", "--now", UNIT)
             steps = ["systemctl --user disable --now (best effort)"]
-            for p in (UNIT_FILE, Path(BINARY), Path(f"{BINARY}.bak")):
+            for p in (UNIT_FILE, Path(BINARY), Path(f"{BINARY}.bak"), DESKTOP_DEST):
                 if p.exists():
                     p.unlink()
                     steps.append(f"removed {p}")
@@ -585,6 +616,7 @@ class Plugin:
                     steps.append(f"example config → {CONFIG}")
                 if PAYLOAD_LICENSE.is_file():
                     _copy_atomic(PAYLOAD_LICENSE, LICENSE_DEST, 0o644)
+                _install_desktop(steps)
                 r = _systemctl("daemon-reload")
                 if r.returncode != 0:
                     raise RuntimeError(f"daemon-reload failed: {r.stderr.strip()}")

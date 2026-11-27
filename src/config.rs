@@ -63,6 +63,7 @@ pub struct Config {
     pub dump: Option<String>,
     pub preview: bool,
     pub preview_strip: bool,
+    pub calibrate: bool,
 }
 
 /// Why a config file or a value was rejected (§4.3).
@@ -228,6 +229,7 @@ impl Config {
             dump: None,
             preview: false,
             preview_strip: false,
+            calibrate: false,
         }
     }
 

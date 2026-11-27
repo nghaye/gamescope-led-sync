@@ -9,6 +9,7 @@
 //! negotiation, so gamescope downscales the capture on the GPU and
 //! ships small frames.
 
+mod calibrate;
 mod capture;
 mod cli;
 mod config;
@@ -44,6 +45,12 @@ fn main() -> ExitCode {
     // so changes light the strip immediately without touching the file.
     if parsed.config.preview_strip {
         return preview::run(&parsed.config);
+    }
+
+    // --calibrate is a stand-alone mode too: it never touches PipeWire, it
+    // only pauses the daemon's capture via SIGUSR1 while it runs.
+    if parsed.config.calibrate {
+        return calibrate::run(&parsed.config);
     }
 
     pipewire::init();

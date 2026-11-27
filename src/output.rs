@@ -95,6 +95,19 @@ impl WledSender {
         self.timeout_s = timeout_s;
     }
 
+    /// Release the WLED realtime mode immediately: a packet with a zero
+    /// timeout byte tells WLED to leave realtime at once, handing the strip
+    /// back to its own preset without waiting for timeout_s. Sent a few
+    /// times back to back because UDP is lossy. Used by --calibrate on exit.
+    pub fn release(&mut self) {
+        self.timeout_s = 0;
+        for _ in 0..3 {
+            let packet = drgb_packet(0, &[]);
+            let _ = self.sock.send_to(&packet, self.addr);
+            self.sent += 1;
+        }
+    }
+
     /// Black out the whole segment: a DRGB packet only carries the
     /// chain's `count` LEDs, so when the layout shrinks, WLED keeps the
     /// tail LEDs at their last color. A full-length black packet turns
@@ -275,6 +288,22 @@ mod tests {
         assert_eq!(n, 2 + MAX_PACKET_LEDS * 3);
         assert_eq!(&buf[..2], &[DRGB_PROTOCOL, 2]);
         assert!(buf[2..n].iter().all(|&b| b == 0));
+    }
+
+    // release() sends header-only packets with a zero timeout byte, three
+    // times: WLED leaves realtime mode immediately on timeout 0.
+    #[test]
+    fn release_sends_zero_timeout_header_packets() {
+        let rx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = rx.local_addr().unwrap().port();
+        rx.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut s = WledSender::new("127.0.0.1", port, 2).unwrap();
+        s.release();
+        assert_eq!(s.sent, 3);
+        let mut buf = [0u8; 16];
+        let (n, _) = rx.recv_from(&mut buf).unwrap();
+        assert_eq!(&buf[..n], &[DRGB_PROTOCOL, 0]);
     }
 
     // crc32 must be CRC-32/ISO-HDLC, the one PNG uses. Its documented
