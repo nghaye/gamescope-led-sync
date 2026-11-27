@@ -22,6 +22,15 @@ One small Rust binary links libpipewire and runs on Linux, with near-zero cost t
 - A WLED controller on the same LAN, UDP realtime enabled, protocol **DRGB**, port 21324 (or as configured), hostname resolvable (`wled.local` via mDNS, or an IP).
 - **At most 490 LEDs** (they must fit in a single DRGB UDP packet).
 
+## Limitations
+
+- **gamescope sessions only**: the capture reads the PipeWire node whose `media.name` is `gamescope` (`[capture] node_name` is the escape hatch if yours is named differently). On a regular desktop session there is no such node, so nothing is captured and the strip follows `on_no_session` (default: WLED falls back to its own preset after `timeout_s`).
+- **One strip, one WLED controller** (and at most 490 LEDs — see _Requirements_).
+- **Brightness is capped by WLED**: the daemon's `brightness` can only scale colors down, so the effective maximum is the LED brightness configured in WLED itself (plus its current limit). Raise it in WLED if the strip is too dim.
+- **A single hole, at the seam**: `gap` can only skip the region between the last and first LED; holes elsewhere along the strip are not supported.
+- **Linux + PipeWire + `systemd --user` only** — no other platform, no autostart without a user systemd session.
+- In the Decky UI the offset slider is limited to −20…+20; the config file accepts any integer.
+
 ## Install
 
 The main path is the **Decky plugin zip**, which embeds the prebuilt binary, the
