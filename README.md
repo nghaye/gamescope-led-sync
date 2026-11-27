@@ -1,10 +1,8 @@
 # gamescope-led-sync
 
-Ambient LED backlight for [gamescope](https://github.com/ValveSoftware/gamescope) sessions, as a SteamOS deliverable.
+Ambient LED backlight for [gamescope](https://github.com/ValveSoftware/gamescope) sessions: the HDMI signal is never touched (no splitter, no sync box) — the program captures gamescope's own PipeWire stream, computes one color per LED around the screen, and sends them to a **WLED** controller on the same LAN as DRGB realtime UDP packets.
 
-Built for a DIY Steam machine on CachyOS: Steam runs in a **gamescope** session (SDDM with autologin, BC250 motherboard), and an addressable LED strip runs around a **65" TV** (perimeter ≈ 4.5 m, ≈ 60 LEDs/m → **≈ 268 LEDs**), driven by a **WLED** controller on the same LAN.
-
-The HDMI signal is never touched (no splitter, no sync box): the program captures gamescope's own PipeWire stream, computes one color per LED, and sends them to WLED as DRGB realtime UDP packets.
+Tested on **SteamOS** (CachyOS, gamescope session started from SDDM with autologin) with a ~268-LED strip around a 65" TV driven by WLED. Provided **as-is**, without warranty — use at your own risk.
 
 ## How it works
 
@@ -12,7 +10,7 @@ The pipeline has four steps:
 
 1. gamescope draws each frame and publishes it on PipeWire.
 2. gamescope-led-sync reads the stream, shrinks it, and computes one color for each LED around the screen edges.
-3. It sends the colors to the WLED controller over the local network, as DRGB realtime UDP packets.
+3. It sends the colors to the WLED controller over the local network.
 4. WLED drives the addressable LED strip around the TV.
 
 One small Rust binary links libpipewire and runs on Linux, with near-zero cost to the game: it asks gamescope to shrink the capture on the GPU (custom `requested_size` negotiation), and it is fully local — no account, no cloud, no telemetry.
@@ -22,7 +20,15 @@ One small Rust binary links libpipewire and runs on Linux, with near-zero cost t
 - Linux with a PipeWire **user session** (SteamOS, Bazzite, ChimeraOS, CachyOS, or a custom build).
 - `systemd --user` (SDDM autologin provides one).
 - A WLED controller on the same LAN, UDP realtime enabled, protocol **DRGB**, port 21324 (or as configured), hostname resolvable (`wled.local` via mDNS, or an IP).
-- **At most 490 LEDs** (one DRGB packet; see _Protocol notes_).
+- **At most 490 LEDs** (they must fit in a single DRGB UDP packet).
+
+## Limitations
+
+- **gamescope sessions only**: the capture reads the PipeWire node whose `media.name` is `gamescope` (`[capture] node_name` is the escape hatch if yours is named differently). On a regular desktop session there is no such node, so nothing is captured and the strip follows `on_no_session` (default: WLED falls back to its own preset after `timeout_s`).
+- **One strip, one WLED controller** (and at most 490 LEDs — see _Requirements_).
+- **Brightness is capped by WLED**: the daemon's `brightness` can only scale colors down, so the effective maximum is the LED brightness configured in WLED itself (plus its current limit). Raise it in WLED if the strip is too dim.
+- **A single hole, at the seam**: `gap` can only skip the region between the last and first LED; holes elsewhere along the strip are not supported.
+- **Linux + PipeWire + `systemd --user` only** — no other platform, no autostart without a user systemd session.
 
 ## Install
 
@@ -92,7 +98,7 @@ See [deploy/config.toml.example](./deploy/config.toml.example) for a fully comme
 
 ### CLI overrides
 
-One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--gap N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, `--start-paused` (start with the capture paused), plus debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip` (send the per-segment test pattern to WLED until SIGTERM), and `--calibrate` (stand-alone full-screen LED color calibration, see above). Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
+One flag per config field, CLI-only flags aside: `--config PATH`, `--setup` (interactive setup, writes the config file and exits), `--dry-run` (never send, log only), `--wled HOST`, `--port`, `--timeout`, `--top/--right/--bottom/--left`, `--start <8 codes>`, `--direction <clockwise|counterclockwise>`, `--offset N`, `--gap N`, `--fps`, `--sample-height`, `--band`, `--saturation`, `--gamma`, `--smooth`, `--brightness`, `--start-paused` (start with the capture paused), plus debug-only `--once`, `--dump PNG`, `--preview`, `--preview-strip` (send the per-segment test pattern to WLED until SIGTERM), and `--calibrate` (stand-alone full-screen LED color calibration, see below). Validation errors exit with a clap-style error (exit code 2); an explicit `--config` pointing at a missing or unparseable file is fatal at startup (exit code 2). Run `gamescope-led-sync --help` for the full list.
 
 ## Service management
 
@@ -113,7 +119,7 @@ If the strip's colors drift from the screen (e.g. a yellow leaning orange on the
 - Each of 24 test colors is shown full-screen while the whole strip lights in the slider-adjusted color at **60%** brightness. Tune the **R/G/B sliders** until the strip matches the screen, then go to the next color. Every page has **Previous / Cancel / Next** buttons. Controls: D-pad/stick = navigate, left/right = adjust (auto-repeat), **A** = confirm, **B** = cancel, **LB/RB** = previous/next (keyboard fallback: arrows, Enter, Esc, PgUp/PgDn).
 - After the last color, a report page shows the fitted per-channel gains and the **WLED white balance** values to enter — WLED web UI: _Settings → LED preferences → "Color white"_: **Red / Green / Blue** (0–255, 255 = no correction) — plus warnings (e.g. suspected Color Order permutation). The full report is saved to `~/.config/gamescope-led-sync/calibration-<UTC timestamp>.txt`. **Quit** releases the WLED realtime mode immediately and resumes the capture.
 
-From a shell it is the same: `gamescope-led-sync --calibrate` (`--dry-run` logs the strip colors instead of sending them). Details in [SPEC.md §18](./SPEC.md).
+From a shell it is the same: `gamescope-led-sync --calibrate` (`--dry-run` logs the strip colors instead of sending them). Details in [SPEC.md §13](./SPEC.md).
 
 ## Strip geometry
 
@@ -127,18 +133,13 @@ The perimeter is a cyclic list of `count = top+right+bottom+left` zones. The str
 
 ## Decky plugin
 
-`plugin/` is a [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin (no root flag; runs as the session user) with two pages:
+A [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin — no root, it runs as the session user — to install the service and configure everything live from the Steam UI, fully gamepad-navigable. Import its zip into Decky Loader (see _Install_ above); from a checkout, `just install-all` does everything. See [plugin/README.md](./plugin/README.md).
 
-- **Main page**: an **Installation** section (plugin + installed versions, version check, and the Install / Start / Stop / Update / Uninstall buttons + «Start at boot» switch — everything gamepad-friendly), then status lines (service, capture, live FPS, WLED strip reachability — polled every 5 s), a **Capture** switch (SIGUSR1 pause/resume; while paused nothing is sent and the WLED is released), a **Capture at startup** switch (`[capture] start_paused`, persisted in the config file and applied immediately on change), the **Brightness / Gamma / Saturation / Smooth** sliders, and a **Configuration** button. Sliders and switches save on change (debounced 400 ms) and go live at the daemon's next tick, and are reloaded at boot.
-- **Configuration screen**: entering it pauses the capture (resumed on exit) and lights each of the 4 strip segments in its own color (bottom red, left blue, top green, right yellow) via the daemon's `--preview-strip` mode; when the start point is an edge midpoint, that edge is split at the loop's seam — beginning keeps the segment color, end is violet — so the circular offset is visible on the strip. Every change is previewed live on the strip but **written to the config file only on «Save and quit»** («Cancel» leaves without saving). Fields: WLED host/IP with a green OK / red NOK reachability check, start point (8 full-word options), clockwise rotation switch, per-segment LED counts each flanked by −1/+1 buttons, with a live total, offset slider (−20…+20, circular shift of the loop), gap slider (0…50, hole at the loop seam between the last and first LED — the creux is skipped when sampling the screen), screen band slider (1–20 %), FPS.
-
-`wled.timeout_s`, `wled.port`, `sample_height`, `behavior.on_no_session` and `capture.node_name` stay file-only. The plugin is installed by importing its zip into Decky Loader (see _Install_ above); from a checkout, `just install-all` does everything. See [plugin/README.md](./plugin/README.md).
-
-## Protocol notes
-
-WLED UDP realtime, protocol byte 2 (**DRGB**): a timeout byte (seconds WLED stays in realtime after the last packet), then three bytes per LED. One packet carries at most **490 LEDs**; beyond that, WLED's DNRGB multi-packet protocol would be needed — out of scope for v1.
-
-While no gamescope session is connected, `on_no_session` decides what is sent: `preset` (default) sends nothing and WLED falls back to its own preset after `timeout_s`; `keep-last` resends the last colors every 1 s; `black` sends black every 1 s. During an active session a 1 s keepalive resends the last colors on static screens, so WLED never drops to its preset mid-game. A manual pause (the Decky «Capture» switch off, or `start_paused = true`) sends nothing at all — whatever `on_no_session` says — so WLED's realtime timeout releases the strip.
+- **Installation**: install / update / uninstall the binary + systemd unit from the zip's embedded payload (no sudo, user-space only), version check against the installed binary, «Start at boot» switch.
+- **Status** (polled every 5 s): service state, capture state, live FPS, WLED reachability.
+- **Capture**: pause/resume switch (while paused, nothing is sent to WLED and it is released) and «Capture at startup» switch (`[capture] start_paused`).
+- **Image**: brightness, gamma, saturation, smooth sliders — saved on change (debounced), live at the daemon's next tick.
+- **Configuration screen**: WLED host with reachability check, start point, direction, per-segment LED counts, offset, gap, screen band, FPS — every change previewed live on the strip (one color per segment, `--preview-strip`), written to the config only on «Save and quit».
 
 ## Troubleshooting
 
